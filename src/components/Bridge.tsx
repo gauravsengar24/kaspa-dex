@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowLeftRight, ExternalLink, Clock, CheckCircle2, XCircle, Loader2 } from "lucide-react"
-import { KASPLEX_BRIDGE_CONFIG, bridgeKAS, bridgeKRC20, getBridgeHistory } from "../utils/bridge"
+import { KASPLEX_BRIDGE_CONFIG, bridgeKAS, getBridgeHistory } from "../utils/bridge"
 import type { BridgeTransfer, BridgeConfig } from "../types"
 
 export default function Bridge() {

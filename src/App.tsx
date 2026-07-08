@@ -17,12 +17,14 @@ import Profile from "./components/Profile"
 import PerpFutures from "./components/PerpFutures"
 import Bridge from "./components/Bridge"
 import Footer from "./components/Footer"
-import { POOLS, KASPA_TOKEN } from "./utils/constants"
+import { KASPA_TOKEN } from "./utils/constants"
+import { usePools } from "./hooks/usePools"
 
 export type TabId = "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge"
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("swap")
+  const { pools } = usePools()
 
   const tabs: { id: TabId; label: string; icon: any }[] = [
     { id: "swap", label: "Swap", icon: ArrowLeftRight },
@@ -67,7 +69,12 @@ export default function App() {
               <button className="btn-primary px-6">+ New Position</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {POOLS.map((pool) => (
+              {pools.length === 0 && (
+                <div className="col-span-full text-center text-kaspa-muted text-sm py-12">
+                  No liquidity pools deployed yet. Create a pair to get started.
+                </div>
+              )}
+              {pools.map((pool) => (
                 <PoolCard key={pool.id} pool={pool} />
               ))}
             </div>

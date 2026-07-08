@@ -1,23 +1,33 @@
 import { useState, useCallback, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowDownUp, Settings, ChevronDown } from "lucide-react"
+import { ethers } from "ethers"
 import TokenSelect from "./TokenSelect"
 import {
   TOKENS,
   KASPA_TOKEN,
-  POOLS,
   SWAP_FEE_PERCENT,
   SLIPPAGE_OPTIONS,
   DEFAULT_SLIPPAGE,
 } from "../utils/constants"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
-import { computeSwapOutput, formatKaspa, formatUsd } from "../utils/kaspa"
+import { usePools } from "../hooks/usePools"
+import { formatKaspa, formatUsd } from "../utils/kaspa"
+import {
+  fetchPairReserves,
+  executeSwap,
+  approveToken,
+  getProviderAddress,
+  getRpcProvider,
+} from "../utils/evm"
+import { KASPLEX_TESTNET_ADDRESSES } from "../types"
 import type { TokenInfo } from "../types"
 
 export default function SwapInterface() {
-  const { connected, connect, balanceRaw, balanceFormatted, connecting, krc20Balances } = useKaspaWallet()
+  const { connected, connect, balanceRaw, balanceFormatted, connecting, krc20Balances, address } = useKaspaWallet()
   const { prices, tokenPrice } = usePrices()
+  const { pools, loading } = usePools()
   const [fromToken, setFromToken] = useState<TokenInfo>(KASPA_TOKEN)
   const [toToken, setToToken] = useState<TokenInfo>(TOKENS[1])
   const [fromAmount, setFromAmount] = useState("")
@@ -26,6 +36,9 @@ export default function SwapInterface() {
   const [slippage, setSlippage] = useState(DEFAULT_SLIPPAGE)
   const [showSettings, setShowSettings] = useState(false)
   const [selectingToken, setSelectingToken] = useState<"from" | "to" | null>(null)
+  const [swapping, setSwapping] = useState(false)
+  const [swapError, setSwapError] = useState<string | null>(null)
+  const [swapTx, setSwapTx] = useState<string | null>(null)
 
   const liveRate = useMemo(() => {
     const fp = tokenPrice(fromToken.ticker)
@@ -36,24 +49,30 @@ export default function SwapInterface() {
 
   const estimatedOutput = useMemo(() => {
     if (!fromAmount || isNaN(Number(fromAmount)) || Number(fromAmount) <= 0) return null
-    if (liveRate) {
-      return Number(fromAmount) * liveRate * (1 - SWAP_FEE_PERCENT / 100)
-    }
-    // Fallback: use pool-specific reserves
-    const pair = POOLS.find(
+    const inputNum = Number(fromAmount)
+
+    const pair = pools.find(
       (p) =>
         (p.token0 === fromToken.ticker && p.token1 === toToken.ticker) ||
         (p.token0 === toToken.ticker && p.token1 === fromToken.ticker)
     )
     if (pair) {
-      const input = Number(fromAmount)
       const tok0In = pair.token0 === fromToken.ticker
       const rIn = tok0In ? Number(pair.reserve0) : Number(pair.reserve1)
       const rOut = tok0In ? Number(pair.reserve1) : Number(pair.reserve0)
-      return computeSwapOutput(input, rIn, rOut, SWAP_FEE_PERCENT)
+      if (rIn > 0 && rOut > 0) {
+        const fee = inputNum * (SWAP_FEE_PERCENT / 100)
+        const effectiveInput = inputNum - fee
+        const numerator = effectiveInput * rOut
+        const denominator = rIn + effectiveInput
+        return numerator / denominator
+      }
+    }
+    if (liveRate) {
+      return inputNum * liveRate * (1 - SWAP_FEE_PERCENT / 100)
     }
     return null
-  }, [fromAmount, liveRate, fromToken.ticker, toToken.ticker])
+  }, [fromAmount, liveRate, fromToken.ticker, toToken.ticker, pools])
 
   const priceImpact = useMemo(() => {
     if (!estimatedOutput || !fromAmount) return 0
@@ -83,6 +102,8 @@ export default function SwapInterface() {
 
   const handleFlip = useCallback(() => {
     setFlipping(true)
+    setSwapError(null)
+    setSwapTx(null)
     setTimeout(() => {
       setFromToken(toToken)
       setToToken(fromToken)
@@ -92,12 +113,48 @@ export default function SwapInterface() {
     }, 150)
   }, [fromToken, toToken])
 
+  const getTokenAddress = useCallback((ticker: string): string | null => {
+    if (ticker === "KAS") return KASPLEX_TESTNET_ADDRESSES.wkas
+    return null
+  }, [])
+
   const handleSwap = useCallback(async () => {
     if (!connected) {
       await connect()
       return
     }
-  }, [connected, connect])
+    if (!fromAmount || Number(fromAmount) <= 0 || !estimatedOutput) return
+
+    setSwapping(true)
+    setSwapError(null)
+    setSwapTx(null)
+
+    try {
+      const fromAddr = getTokenAddress(fromToken.ticker)
+      const toAddr = getTokenAddress(toToken.ticker)
+      if (!fromAddr || !toAddr) {
+        throw new Error(`Unsupported token pair: ${fromToken.ticker} → ${toToken.ticker}`)
+      }
+
+      const amountIn = ethers.parseEther(fromAmount)
+      const amountOutMin = ethers.parseEther(estimatedOutput.toFixed(18))
+      const path = [fromAddr, toAddr]
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 20
+
+      if (fromAddr !== KASPLEX_TESTNET_ADDRESSES.wkas) {
+        await approveToken(fromAddr, KASPLEX_TESTNET_ADDRESSES.router, amountIn)
+      }
+
+      const tx = await executeSwap(amountIn, amountOutMin, path, deadline)
+      setSwapTx(tx.hash)
+      await tx.wait()
+      setFromAmount("")
+    } catch (err) {
+      setSwapError(err instanceof Error ? err.message : "Swap failed")
+    } finally {
+      setSwapping(false)
+    }
+  }, [connected, connect, fromAmount, estimatedOutput, fromToken.ticker, toToken.ticker, getTokenAddress])
 
   const insufficientBalance = useMemo(() => {
     if (!connected || !fromAmount || isNaN(Number(fromAmount))) return false
@@ -108,7 +165,9 @@ export default function SwapInterface() {
   const displayBalance = connected
     ? isFromKas
       ? formatKaspa(balanceRaw)
-      : "—"
+      : krc20Balances[fromToken.ticker] !== undefined
+        ? String(krc20Balances[fromToken.ticker])
+        : "—"
     : "—"
 
   const kasUsdPrice = prices.kas.usd > 0 ? formatUsd(prices.kas.usd) : "—"
@@ -214,7 +273,7 @@ export default function SwapInterface() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You buy</span>
             <span className="text-xs text-kaspa-muted">
-              Balance: {displayBalance} {toToken.ticker}
+              Balance: {connected ? (krc20Balances[toToken.ticker] !== undefined ? String(krc20Balances[toToken.ticker]) : "—") : "—"} {toToken.ticker}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -249,7 +308,13 @@ export default function SwapInterface() {
           </div>
         )}
 
-        {estimatedOutput !== null && fromAmount && (
+        {pools.length === 0 && !loading && (
+          <div className="text-center text-sm text-kaspa-muted py-3">
+            No liquidity pools yet. Deploy a pair to enable swaps.
+          </div>
+        )}
+
+        {estimatedOutput !== null && fromAmount && pools.length > 0 && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -290,6 +355,26 @@ export default function SwapInterface() {
           </motion.div>
         )}
 
+        {swapTx && (
+          <div className="glass rounded-xl p-3 text-sm text-kaspa-green text-center">
+            Swap successful!{" "}
+            <a
+              href={`https://explorer.testnet.kasplextest.xyz/tx/${swapTx}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              View tx
+            </a>
+          </div>
+        )}
+
+        {swapError && (
+          <div className="glass rounded-xl p-3 text-sm text-kaspa-red text-center">
+            {swapError}
+          </div>
+        )}
+
         {insufficientBalance && fromAmount && (
           <div className="glass rounded-xl p-3 text-sm text-kaspa-red text-center">
             Insufficient {fromToken.ticker} balance{connected ? ` — you have ${displayBalance} ${fromToken.ticker}` : ""}
@@ -299,19 +384,23 @@ export default function SwapInterface() {
         <button
           onClick={handleSwap}
           disabled={
-            !fromAmount || Number(fromAmount) <= 0 || insufficientBalance || connecting
+            !fromAmount || Number(fromAmount) <= 0 || insufficientBalance || connecting || swapping
           }
           className="btn-primary w-full mt-2"
         >
-          {connecting
-            ? "Connecting..."
-            : !connected
-              ? "Connect Wallet"
-              : insufficientBalance
-                ? `Insufficient ${fromToken.ticker}`
-                : !fromAmount || Number(fromAmount) <= 0
-                  ? "Enter an amount"
-                  : "Swap"}
+          {swapping
+            ? "Swapping..."
+            : connecting
+              ? "Connecting..."
+              : !connected
+                ? "Connect Wallet"
+                : insufficientBalance
+                  ? `Insufficient ${fromToken.ticker}`
+                  : !fromAmount || Number(fromAmount) <= 0
+                    ? "Enter an amount"
+                    : pools.length === 0
+                      ? "No pools available"
+                      : "Swap"}
         </button>
       </div>
 
