@@ -20,6 +20,8 @@ import {
   approveToken,
   getProviderAddress,
   getRpcProvider,
+  wrapKAS,
+  unwrapWKAS,
 } from "../utils/evm"
 import { KASPLEX_TESTNET_ADDRESSES } from "../types"
 import type { TokenInfo } from "../types"
@@ -138,16 +140,35 @@ export default function SwapInterface() {
 
       const amountIn = ethers.parseEther(fromAmount)
       const amountOutMin = ethers.parseEther(estimatedOutput.toFixed(18))
-      const path = [fromAddr, toAddr]
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 20
 
-      if (fromAddr !== KASPLEX_TESTNET_ADDRESSES.wkas) {
-        await approveToken(fromAddr, KASPLEX_TESTNET_ADDRESSES.router, amountIn)
+      let actualFrom = fromAddr
+      let actualTo = toAddr
+      const isFromNative = fromToken.ticker === "KAS"
+      const isToNative = toToken.ticker === "KAS"
+
+      if (isFromNative) {
+        const wrapTx = await wrapKAS(amountIn)
+        await wrapTx.wait()
+        actualFrom = KASPLEX_TESTNET_ADDRESSES.wkas
       }
 
+      const wkasAddr = KASPLEX_TESTNET_ADDRESSES.wkas
+      const path = isToNative ? [actualFrom, wkasAddr] : [actualFrom, actualTo]
+
+      if (actualFrom !== wkasAddr) {
+        await approveToken(actualFrom, KASPLEX_TESTNET_ADDRESSES.router, amountIn)
+      }
+
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 20
       const tx = await executeSwap(amountIn, amountOutMin, path, deadline)
       setSwapTx(tx.hash)
       await tx.wait()
+
+      if (isToNative) {
+        const unwrapTx = await unwrapWKAS(amountOutMin)
+        await unwrapTx.wait()
+      }
+
       setFromAmount("")
     } catch (err) {
       setSwapError(err instanceof Error ? err.message : "Swap failed")

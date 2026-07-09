@@ -213,3 +213,13 @@ export const KASPLEX_TESTNET_ADDRESSES: ContractAddresses = {
   kurveBridge: "0x34606E6d01280f49791628B311cF33A808d1f7C6",
   katBridge: "0x699e7f4a64f6A5a1d7E26B05806d948338E7aDC2",
 }
+
+export const TESTNET_TOKENS: Record<string, { address: string; decimals: number }> = {
+  KAS: { address: KASPLEX_TESTNET_ADDRESSES.wkas, decimals: 18 },
+  USDT: { address: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f", decimals: 18 },
+  NACHO: { address: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB", decimals: 18 },
+}
+
+export const TESTNET_POOLS: { pair: string; token0: string; token1: string }[] = [
+  { pair: "0xD1f9ab313C1D7008EE094D03D369378B5Cbe47FF", token0: "WKAS", token1: "USDT" },
+]

@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { ethers } from "ethers"
-import { fetchAllPools, getTokenBalance, getRpcProvider } from "../utils/evm"
-import { KASPLEX_TESTNET_ADDRESSES } from "../types"
+import { getRpcProvider } from "../utils/evm"
+import { KASPLEX_TESTNET_ADDRESSES, TESTNET_POOLS, TESTNET_TOKENS } from "../types"
 import type { PoolInfo } from "../types"
+
+const PAIR_ABI = [
+  "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+]
 
 export function usePools(pollMs = 30_000) {
   const [pools, setPools] = useState<PoolInfo[]>([])
@@ -17,38 +21,38 @@ export function usePools(pollMs = 30_000) {
   const fetchPools = useCallback(async () => {
     try {
       const provider = getRpcProvider()
-      const onChain = await fetchAllPools(provider)
-
-      const tokenAddressToTicker: Record<string, string> = {
-        [KASPLEX_TESTNET_ADDRESSES.wkas.toLowerCase()]: "KAS",
-      }
-
       const mapped: PoolInfo[] = []
-      for (const pool of onChain) {
-        const t0 = tokenAddressToTicker[pool.token0.toLowerCase()] || pool.token0
-        const t1 = tokenAddressToTicker[pool.token1.toLowerCase()] || pool.token1
 
-        const wkas = KASPLEX_TESTNET_ADDRESSES.wkas.toLowerCase()
-        const kasReserve = wkas === pool.token0.toLowerCase() ? pool.reserve0 : wkas === pool.token1.toLowerCase() ? pool.reserve1 : 0n
+      for (const p of TESTNET_POOLS) {
+        const pair = new ethers.Contract(p.pair, PAIR_ABI, provider)
+        let reserve0 = 0n, reserve1 = 0n
+        try {
+          const res = await pair.getReserves() as [bigint, bigint, number]
+          reserve0 = res[0]
+          reserve1 = res[1]
+        } catch {}
 
+        const kasReserve = p.token0 === "WKAS" ? reserve0 : p.token1 === "WKAS" ? reserve1 : 0n
         const nativePrice = 0.02
         const tvl = Number(kasReserve) / 1e18 * nativePrice * 2
+        const tok0 = p.token0 === "WKAS" ? "KAS" : p.token0
+        const tok1 = p.token1 === "WKAS" ? "KAS" : p.token1
 
         mapped.push({
-          id: pool.pairAddress,
-          token0: t0,
-          token1: t1,
-          reserve0: ethers.formatEther(pool.reserve0),
-          reserve1: ethers.formatEther(pool.reserve1),
+          id: p.pair,
+          token0: tok0,
+          token1: tok1,
+          reserve0: ethers.formatEther(reserve0),
+          reserve1: ethers.formatEther(reserve1),
           fee: 0.25,
           tvl,
           volume24h: tvl * 0.2,
-          apr: 8 + Math.random() * 20,
+          apr: tvl > 0 ? 12 + Math.random() * 20 : 0,
         })
       }
 
       if (mountedRef.current) {
-        setPools(mapped.length > 0 ? mapped : [])
+        setPools(mapped)
         setLoading(false)
       }
     } catch {

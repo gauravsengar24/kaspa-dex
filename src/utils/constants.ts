@@ -1,5 +1,5 @@
 import type { TokenInfo } from "../types"
-import { KASPLEX_TESTNET_ADDRESSES } from "../types"
+import { KASPLEX_TESTNET_ADDRESSES, TESTNET_TOKENS } from "../types"
 
 export const KASPA_TOKEN: TokenInfo = {
   ticker: "KAS",
@@ -12,8 +12,8 @@ export const KASPA_TOKEN: TokenInfo = {
 
 export const TOKENS: TokenInfo[] = [
   KASPA_TOKEN,
-  { ticker: "USDT", name: "Tether USD", decimals: 6, icon: "💵", address: undefined, isKrc20: true },
-  { ticker: "NACHO", name: "Nacho Coin", decimals: 8, icon: "🌮", address: undefined, isKrc20: true },
+  { ticker: "USDT", name: "Tether USD", decimals: 18, icon: "💵", address: TESTNET_TOKENS.USDT.address, isKrc20: false },
+  { ticker: "NACHO", name: "Nacho Coin", decimals: 18, icon: "🌮", address: TESTNET_TOKENS.NACHO.address, isKrc20: false },
   { ticker: "KASPY", name: "Kaspy Token", decimals: 8, icon: "🐕", address: undefined, isKrc20: true },
   { ticker: "GHOST", name: "Ghost KAS", decimals: 8, icon: "👻", address: undefined, isKrc20: true },
   { ticker: "KASPER", name: "Kasper", decimals: 8, icon: "💎", address: undefined, isKrc20: true },

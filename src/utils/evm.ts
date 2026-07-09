@@ -127,6 +127,13 @@ export async function executeSwap(
   return router.swapExactTokensForTokens(amountIn, amountOutMin, path, await signer.getAddress(), deadline)
 }
 
+const WKAS_ABI = [
+  "function deposit() payable",
+  "function withdraw(uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+]
+
 export async function getTokenBalance(tokenAddress: string, owner: string): Promise<bigint> {
   const erc20 = getErc20Contract(tokenAddress)
   return erc20.balanceOf(owner) as Promise<bigint>
@@ -136,4 +143,18 @@ export async function getProviderAddress(): Promise<string> {
   const provider = await getSignerProvider()
   const signer = await provider.getSigner()
   return signer.getAddress()
+}
+
+export async function wrapKAS(amount: bigint): Promise<ethers.TransactionResponse> {
+  const provider = await getSignerProvider()
+  const signer = await provider.getSigner()
+  const wkas = new ethers.Contract(KASPLEX_TESTNET_ADDRESSES.wkas, WKAS_ABI, signer)
+  return wkas.deposit({ value: amount })
+}
+
+export async function unwrapWKAS(amount: bigint): Promise<ethers.TransactionResponse> {
+  const provider = await getSignerProvider()
+  const signer = await provider.getSigner()
+  const wkas = new ethers.Contract(KASPLEX_TESTNET_ADDRESSES.wkas, WKAS_ABI, signer)
+  return wkas.withdraw(amount)
 }
