@@ -158,3 +158,74 @@ export async function unwrapWKAS(amount: bigint): Promise<ethers.TransactionResp
   const wkas = new ethers.Contract(KASPLEX_TESTNET_ADDRESSES.wkas, WKAS_ABI, signer)
   return wkas.withdraw(amount)
 }
+
+const WEIGHTED_POOL_ABI = [
+  "function getTokens() view returns (address[])",
+  "function getNormalizedWeights() view returns (uint256[])",
+  "function getSwapFee() view returns (uint256)",
+  "function getInvariant() view returns (uint256)",
+  "function getTotalSupply() view returns (uint256)",
+  "function getBalance(address) view returns (uint256)",
+  "function onSwap(address tokenIn, address tokenOut, uint256 amountIn) view returns (uint256)",
+  "function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut) returns (uint256)",
+]
+
+const MODULE_A_VAULT_ABI = [
+  "function batchSwap(tuple(address pool, address tokenIn, address tokenOut)[] steps, uint256 amountIn, uint256 minAmountOut, uint256 deadline) returns (uint256)",
+  "function queryBatchSwap(tuple(address pool, address tokenIn, address tokenOut)[] steps, uint256 amountIn) view returns (uint256)",
+  "function swapExactIn(address pool, address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, uint256 deadline) returns (uint256)",
+  "function swapExactInKAS(address pool, address tokenOut, uint256 minAmountOut, uint256 deadline) payable returns (uint256)",
+  "function batchSwapKASIn(tuple(address pool, address tokenIn, address tokenOut)[] steps, uint256 minAmountOut, uint256 deadline) payable returns (uint256)",
+  "function registeredPools(address) view returns (bool)",
+  "function wkas() view returns (address)",
+]
+
+export function getWeightedPoolContract(
+  address: string,
+  signerOrProvider?: ethers.Provider | ethers.Signer
+): Contract {
+  return new Contract(address, WEIGHTED_POOL_ABI, signerOrProvider ?? getRpcProvider())
+}
+
+export function getModuleAVaultContract(
+  vaultAddress: string,
+  signerOrProvider?: ethers.Provider | ethers.Signer
+): Contract {
+  return new Contract(vaultAddress, MODULE_A_VAULT_ABI, signerOrProvider ?? getRpcProvider())
+}
+
+import { MODULE_A_ADDRESSES } from "../types"
+
+export async function queryBatchSwap(
+  steps: { pool: string; tokenIn: string; tokenOut: string }[],
+  amountIn: bigint
+): Promise<bigint> {
+  const vault = getModuleAVaultContract(MODULE_A_ADDRESSES.vault, getRpcProvider())
+  return vault.queryBatchSwap(steps, amountIn) as Promise<bigint>
+}
+
+export async function executeBatchSwap(
+  steps: { pool: string; tokenIn: string; tokenOut: string }[],
+  amountIn: bigint,
+  minAmountOut: bigint,
+  deadline: number
+): Promise<ethers.TransactionResponse> {
+  const provider = await getSignerProvider()
+  const signer = await provider.getSigner()
+  const vault = getModuleAVaultContract(MODULE_A_ADDRESSES.vault, signer)
+  return vault.batchSwap(steps, amountIn, minAmountOut, deadline)
+}
+
+export async function executeBatchSwapKASIn(
+  steps: { pool: string; tokenIn: string; tokenOut: string }[],
+  minAmountOut: bigint,
+  deadline: number,
+  value: bigint
+): Promise<ethers.TransactionResponse> {
+  const provider = await getSignerProvider()
+  const signer = await provider.getSigner()
+  const vault = getModuleAVaultContract(MODULE_A_ADDRESSES.vault, signer)
+  return vault.batchSwapKASIn(steps, minAmountOut, deadline, { value })
+}
+
+export { WEIGHTED_POOL_ABI, MODULE_A_VAULT_ABI }

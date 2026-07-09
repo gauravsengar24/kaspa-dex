@@ -223,3 +223,47 @@ export const TESTNET_TOKENS: Record<string, { address: string; decimals: number 
 export const TESTNET_POOLS: { pair: string; token0: string; token1: string }[] = [
   { pair: "0xD1f9ab313C1D7008EE094D03D369378B5Cbe47FF", token0: "WKAS", token1: "USDT" },
 ]
+
+export interface ModuleAContractAddresses {
+  factory: string
+  vault: string
+  wkas: string
+}
+
+export const MODULE_A_ADDRESSES: ModuleAContractAddresses = {
+  factory: "0x6B5EaE0e7fE0E13467CF667356CdF14bdfb0BC21",
+  vault: "0x75cC7720f4A181F89C7A8ED25AD71F75EFda6347",
+  wkas: "0xC065C62a10fB363fD31CA394D632C4Df106566df",
+}
+
+export interface WeightedPoolConfig {
+  poolAddress: string
+  tokens: string[]
+  weights: number[]
+  swapFee: number
+  balances: string[]
+  totalSupply: string
+  invariant: string
+}
+
+export interface ModuleAPoolInfo {
+  poolAddress: string
+  tokens: { address: string; ticker: string; weight: number; balance: string }[]
+  swapFee: number
+  totalSupply: string
+  tvl: number
+}
+
+export interface SwapStep {
+  pool: string
+  tokenIn: string
+  tokenOut: string
+}
+
+export interface BatchQuote {
+  steps: SwapStep[]
+  amountIn: string
+  amountOut: string
+  tokenIn: string
+  tokenOut: string
+}
