@@ -197,7 +197,7 @@ export default function SwapInterface() {
     try {
       const amountIn = ethers.parseEther(fromAmount)
       const minOut = ethers.parseEther(minReceived!.toFixed(18))
-      const receipt = await executeRoute(route, amountIn, minOut, fromToken.ticker)
+      const receipt = await executeRoute(route, amountIn, minOut, fromToken.ticker, toToken.ticker)
       setSwapTx(receipt.hash)
       setFromAmount("")
       setEstimatedOutput(null)

@@ -138,11 +138,32 @@ export async function queryRoute(route: RouteStep[], amountIn: bigint): Promise<
   }
 }
 
+const WKAS_CONTRACT_ABI = [
+  "function deposit() payable",
+  "function withdraw(uint256)",
+  "function balanceOf(address) view returns (uint256)",
+]
+
+async function wrapNative(signer: ethers.Signer, amount: bigint): Promise<void> {
+  const wkas = new ethers.Contract(WKAS, WKAS_CONTRACT_ABI, signer)
+  const tx = await wkas.deposit({ value: amount })
+  await tx.wait()
+}
+
+async function unwrapNative(signer: ethers.Signer, amount: bigint): Promise<void> {
+  const wkas = new ethers.Contract(WKAS, WKAS_CONTRACT_ABI, signer)
+  try {
+    const tx = await wkas.withdraw(amount)
+    await tx.wait()
+  } catch { }
+}
+
 export async function executeRoute(
   route: RouteStep[],
   amountIn: bigint,
   minAmountOut: bigint,
-  fromTokenTicker: string
+  fromTokenTicker: string,
+  toTokenTicker?: string
 ): Promise<ethers.ContractTransactionReceipt> {
   const provider = await getSignerProvider()
   const signer = await provider.getSigner()
@@ -150,6 +171,10 @@ export async function executeRoute(
   const deadline = Math.floor(Date.now() / 1000) + 60 * 20
 
   const isFromNative = fromTokenTicker === "KAS"
+  const isToNative = toTokenTicker === "KAS"
+
+  let receipt: ethers.ContractTransactionReceipt | null = null
+  let outputToken: string | null = null
 
   if (route.length === 1) {
     const step = route[0]
@@ -157,52 +182,44 @@ export async function executeRoute(
       const router = getRouterContract(signer)
       const path = isFromNative ? [WKAS, step.tokenOut] : [step.tokenIn, step.tokenOut]
       let actualFrom = step.tokenIn
-      if (isFromNative) {
-        const wkas = new ethers.Contract(WKAS, ["function deposit() payable"], signer)
-        const wtx = await wkas.deposit({ value: amountIn })
-        await wtx.wait()
-        actualFrom = WKAS
-      }
+      if (isFromNative) { await wrapNative(signer, amountIn); actualFrom = WKAS }
       if (actualFrom.toLowerCase() !== WKAS) {
-        const token = getErc20Contract(actualFrom, signer)
-        const atx = await token.approve(KASPLEX_TESTNET_ADDRESSES.router, amountIn)
+        const atx = await (getErc20Contract(actualFrom, signer)).approve(KASPLEX_TESTNET_ADDRESSES.router, amountIn)
         await atx.wait()
       }
       const tx = await router.swapExactTokensForTokens(amountIn, minAmountOut, path, userAddr, deadline)
-      return tx.wait()
+      receipt = await tx.wait()
+      outputToken = path[path.length - 1]
     }
     if (step.poolType === "stable") {
       const pool = getStableSwapPoolContract(step.pool, signer)
-      if (isFromNative) {
-        const wkas = new ethers.Contract(WKAS, ["function deposit() payable"], signer)
-        const wtx = await wkas.deposit({ value: amountIn })
-        await wtx.wait()
-      }
+      if (isFromNative) await wrapNative(signer, amountIn)
       const actualFrom = isFromNative ? WKAS : step.tokenIn
-      if (actualFrom.toLowerCase() !== STABLESWAP_POOL_ADDRESS.toLowerCase()) {
-        const token = getErc20Contract(actualFrom, signer)
-        const atx = await token.approve(step.pool, amountIn)
+      if (actualFrom.toLowerCase() !== step.pool.toLowerCase()) {
+        const atx = await (getErc20Contract(actualFrom, signer)).approve(step.pool, amountIn)
         await atx.wait()
       }
       const tx = await pool.exchange(step.stableIndexIn!, step.stableIndexOut!, amountIn, minAmountOut)
-      return tx.wait()
+      receipt = await tx.wait()
+      outputToken = step.tokenOut
     }
     if (step.poolType === "weighted") {
-      if (isFromNative) {
-        const vault = getModuleAVaultContract(MODULE_A_ADDRESSES.vault, signer)
-        const tx = await vault.swapExactInKAS(step.pool, step.tokenOut, minAmountOut, deadline, { value: amountIn })
-        return tx.wait()
-      }
       const vault = getModuleAVaultContract(MODULE_A_ADDRESSES.vault, signer)
-      const token = getErc20Contract(step.tokenIn, signer)
-      const atx = await token.approve(MODULE_A_ADDRESSES.vault, amountIn)
-      await atx.wait()
-      const tx = await vault.swapExactIn(step.pool, step.tokenIn, step.tokenOut, amountIn, minAmountOut, deadline)
-      return tx.wait()
+      if (isFromNative) {
+        const tx = await vault.swapExactInKAS(step.pool, step.tokenOut, minAmountOut, deadline, { value: amountIn })
+        receipt = await tx.wait()
+        outputToken = step.tokenOut
+      } else {
+        const atx = await (getErc20Contract(step.tokenIn, signer)).approve(MODULE_A_ADDRESSES.vault, amountIn)
+        await atx.wait()
+        const tx = await vault.swapExactIn(step.pool, step.tokenIn, step.tokenOut, amountIn, minAmountOut, deadline)
+        receipt = await tx.wait()
+        outputToken = step.tokenOut
+      }
     }
   }
 
-  if (route.length === 2) {
+  if (route.length === 2 && !receipt) {
     const isBothCPMM = route.every((s) => s.poolType === "cpmm")
     const isBothWeighted = route.every((s) => s.poolType === "weighted")
 
@@ -210,19 +227,14 @@ export async function executeRoute(
       const path = [route[0].tokenIn, route[0].tokenOut, route[1].tokenOut]
       const router = getRouterContract(signer)
       let actualFrom = route[0].tokenIn
-      if (isFromNative) {
-        const wkas = new ethers.Contract(WKAS, ["function deposit() payable"], signer)
-        const wtx = await wkas.deposit({ value: amountIn })
-        await wtx.wait()
-        actualFrom = WKAS
-      }
+      if (isFromNative) { await wrapNative(signer, amountIn); actualFrom = WKAS }
       if (actualFrom.toLowerCase() !== WKAS) {
-        const token = getErc20Contract(actualFrom, signer)
-        const atx = await token.approve(KASPLEX_TESTNET_ADDRESSES.router, amountIn)
+        const atx = await (getErc20Contract(actualFrom, signer)).approve(KASPLEX_TESTNET_ADDRESSES.router, amountIn)
         await atx.wait()
       }
       const tx = await router.swapExactTokensForTokens(amountIn, minAmountOut, path, userAddr, deadline)
-      return tx.wait()
+      receipt = await tx.wait()
+      outputToken = path[path.length - 1]
     }
 
     if (isBothWeighted) {
@@ -230,15 +242,22 @@ export async function executeRoute(
       const vault = getModuleAVaultContract(MODULE_A_ADDRESSES.vault, signer)
       if (isFromNative) {
         const tx = await vault.batchSwapKASIn(steps, minAmountOut, deadline, { value: amountIn })
-        return tx.wait()
+        receipt = await tx.wait()
+      } else {
+        const atx = await (getErc20Contract(route[0].tokenIn, signer)).approve(MODULE_A_ADDRESSES.vault, amountIn)
+        await atx.wait()
+        const tx = await vault.batchSwap(steps, amountIn, minAmountOut, deadline)
+        receipt = await tx.wait()
       }
-      const token = getErc20Contract(route[0].tokenIn, signer)
-      const atx = await token.approve(MODULE_A_ADDRESSES.vault, amountIn)
-      await atx.wait()
-      const tx = await vault.batchSwap(steps, amountIn, minAmountOut, deadline)
-      return tx.wait()
+      outputToken = route[route.length - 1].tokenOut
     }
   }
 
-  throw new Error("No execution path for route")
+  if (!receipt) throw new Error("No execution path for route")
+
+  if (isToNative && outputToken?.toLowerCase() === WKAS.toLowerCase()) {
+    await unwrapNative(signer, minAmountOut)
+  }
+
+  return receipt
 }
