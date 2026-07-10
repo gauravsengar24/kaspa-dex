@@ -148,6 +148,10 @@ export async function connectWallet(): Promise<WalletState> {
   const balanceData = await p.getBalance()
   const balance = balanceData?.total ? Number(balanceData.total) / SOMPI_PER_KAS : 0
   saveSession(address)
+  try {
+    const evm = (window as any).kasware?.ethereum
+    if (evm) await evm.request({ method: "eth_requestAccounts", params: [] })
+  } catch { /* EVM authorization optional */ }
   return { address, balance, connected: true, connecting: false }
 }
 

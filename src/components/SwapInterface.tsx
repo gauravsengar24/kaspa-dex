@@ -60,7 +60,16 @@ export default function SwapInterface() {
 
   useEffect(() => {
     if (connected) {
-      getProviderAddress().then(setUserAddress).catch(() => setUserAddress(null))
+      getProviderAddress().then(setUserAddress).catch(async () => {
+        try {
+          const evm = (window as any).kasware?.ethereum
+          if (evm) await evm.request({ method: "eth_requestAccounts", params: [] })
+          const addr = await getProviderAddress()
+          setUserAddress(addr)
+        } catch {
+          setUserAddress(null)
+        }
+      })
     } else {
       setUserAddress(null)
       setFromBalance(null)
@@ -69,17 +78,19 @@ export default function SwapInterface() {
   }, [connected])
 
   useEffect(() => {
-    if (!connected || !userAddress) { setFromBalance(null); setToBalance(null); return }
+    if (!connected) { setFromBalance(null); setToBalance(null); return }
     let cancelled = false
     const fetchBalances = async () => {
       const getBalance = async (ticker: string): Promise<number | null> => {
         if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") return balanceRaw
-        const evmAddr = TOKEN_ADDRESS_MAP[ticker]
-        if (evmAddr) {
-          try {
-            const bal = await getEvmTokenBalance(evmAddr, userAddress)
-            return Number(ethers.formatEther(bal))
-          } catch { return null }
+        if (userAddress) {
+          const evmAddr = TOKEN_ADDRESS_MAP[ticker]
+          if (evmAddr) {
+            try {
+              const bal = await getEvmTokenBalance(evmAddr, userAddress)
+              return Number(ethers.formatEther(bal))
+            } catch { return null }
+          }
         }
         if (krc20Balances[ticker] !== undefined) return krc20Balances[ticker]
         return null

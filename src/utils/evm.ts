@@ -141,6 +141,9 @@ export async function getTokenBalance(tokenAddress: string, owner: string): Prom
 
 export async function getProviderAddress(): Promise<string> {
   const provider = await getSignerProvider()
+  try {
+    await provider.send("eth_requestAccounts", [])
+  } catch {}
   const signer = await provider.getSigner()
   return signer.getAddress()
 }
