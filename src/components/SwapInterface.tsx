@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowDownUp, Settings, ChevronDown } from "lucide-react"
 import { ethers } from "ethers"
@@ -22,6 +22,7 @@ import {
   getRpcProvider,
   wrapKAS,
   unwrapWKAS,
+  getTokenBalance as getEvmTokenBalance,
 } from "../utils/evm"
 import { KASPLEX_TESTNET_ADDRESSES } from "../types"
 import type { TokenInfo } from "../types"
@@ -41,6 +42,52 @@ export default function SwapInterface() {
   const [swapping, setSwapping] = useState(false)
   const [swapError, setSwapError] = useState<string | null>(null)
   const [swapTx, setSwapTx] = useState<string | null>(null)
+  const [userAddress, setUserAddress] = useState<string | null>(null)
+  const [fromBalance, setFromBalance] = useState<string>("—")
+  const [toBalance, setToBalance] = useState<string>("—")
+
+  useEffect(() => {
+    if (connected) {
+      getProviderAddress().then(setUserAddress).catch(() => setUserAddress(null))
+    } else {
+      setUserAddress(null)
+      setFromBalance("—")
+      setToBalance("—")
+    }
+  }, [connected])
+
+  useEffect(() => {
+    if (!connected || !userAddress) { setFromBalance("—"); setToBalance("—"); return }
+    let cancelled = false
+    const fetchBalances = async () => {
+      const getBalance = async (ticker: string): Promise<string> => {
+        if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
+          return formatKaspa(balanceRaw)
+        }
+        if (krc20Balances[ticker] !== undefined) {
+          return String(krc20Balances[ticker])
+        }
+        const evmAddr = getTokenAddress(ticker)
+        if (evmAddr) {
+          try {
+            const bal = await getEvmTokenBalance(evmAddr, userAddress)
+            return ethers.formatEther(bal)
+          } catch {
+            return "—"
+          }
+        }
+        return "—"
+      }
+      const fb = await getBalance(fromToken.ticker)
+      const tb = await getBalance(toToken.ticker)
+      if (!cancelled) {
+        setFromBalance(fb)
+        setToBalance(tb)
+      }
+    }
+    fetchBalances()
+    return () => { cancelled = true }
+  }, [connected, userAddress, fromToken.ticker, toToken.ticker, balanceRaw, krc20Balances])
 
   const liveRate = useMemo(() => {
     const fp = tokenPrice(fromToken.ticker)
@@ -107,6 +154,8 @@ export default function SwapInterface() {
     setSwapError(null)
     setSwapTx(null)
     setTimeout(() => {
+      setFromBalance("—")
+      setToBalance("—")
       setFromToken(toToken)
       setToToken(fromToken)
       setFromAmount("")
@@ -115,9 +164,19 @@ export default function SwapInterface() {
     }, 150)
   }, [fromToken, toToken])
 
+  const TOKEN_ADDRESS_MAP: Record<string, string> = {
+    KAS: KASPLEX_TESTNET_ADDRESSES.wkas,
+    WKAS: KASPLEX_TESTNET_ADDRESSES.wkas,
+    USDC: "0xB0c9d7e1e5635a1FBFfC8CFD75CE16BA1ccf2849",
+    USDT: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f",
+    WBTC: "0x42134d776638D67e24cFA0d316f58B5e52cF885f",
+    LINK: "0xa2E3e66262825cA2C6a7352d4F5a1Ba9E82Ff89c",
+    TUSD: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35",
+    NACHO: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB",
+  }
+
   const getTokenAddress = useCallback((ticker: string): string | null => {
-    if (ticker === "KAS") return KASPLEX_TESTNET_ADDRESSES.wkas
-    return null
+    return TOKEN_ADDRESS_MAP[ticker] ?? null
   }, [])
 
   const handleSwap = useCallback(async () => {
@@ -178,18 +237,9 @@ export default function SwapInterface() {
   }, [connected, connect, fromAmount, estimatedOutput, fromToken.ticker, toToken.ticker, getTokenAddress])
 
   const insufficientBalance = useMemo(() => {
-    if (!connected || !fromAmount || isNaN(Number(fromAmount))) return false
-    return Number(fromAmount) > balanceRaw
-  }, [connected, fromAmount, balanceRaw])
-
-  const isFromKas = fromToken.ticker === KASPA_TOKEN.ticker
-  const displayBalance = connected
-    ? isFromKas
-      ? formatKaspa(balanceRaw)
-      : krc20Balances[fromToken.ticker] !== undefined
-        ? String(krc20Balances[fromToken.ticker])
-        : "—"
-    : "—"
+    if (!connected || !fromAmount || isNaN(Number(fromAmount)) || fromBalance === "—") return false
+    return Number(fromAmount) > Number(fromBalance)
+  }, [connected, fromAmount, fromBalance])
 
   const kasUsdPrice = prices.kas.usd > 0 ? formatUsd(prices.kas.usd) : "—"
 
@@ -251,7 +301,7 @@ export default function SwapInterface() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You sell</span>
             <span className="text-xs text-kaspa-muted">
-              Balance: {displayBalance} {fromToken.ticker}
+              Balance: {fromBalance} {fromToken.ticker}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -294,7 +344,7 @@ export default function SwapInterface() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You buy</span>
             <span className="text-xs text-kaspa-muted">
-              Balance: {connected ? (krc20Balances[toToken.ticker] !== undefined ? String(krc20Balances[toToken.ticker]) : "—") : "—"} {toToken.ticker}
+              Balance: {toBalance} {toToken.ticker}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -398,7 +448,7 @@ export default function SwapInterface() {
 
         {insufficientBalance && fromAmount && (
           <div className="glass rounded-xl p-3 text-sm text-kaspa-red text-center">
-            Insufficient {fromToken.ticker} balance{connected ? ` — you have ${displayBalance} ${fromToken.ticker}` : ""}
+            Insufficient {fromToken.ticker} balance{connected ? ` — you have ${fromBalance} ${fromToken.ticker}` : ""}
           </div>
         )}
 
@@ -430,9 +480,11 @@ export default function SwapInterface() {
           <TokenSelect
             onSelect={(token) => {
               if (selectingToken === "from") {
+                setFromBalance("—")
                 setFromToken(token)
                 if (token.ticker === toToken.ticker) setToToken(fromToken)
               } else {
+                setToBalance("—")
                 setToToken(token)
                 if (token.ticker === fromToken.ticker) setFromToken(toToken)
               }

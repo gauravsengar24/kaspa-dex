@@ -8,18 +8,44 @@ import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
 import { useModuleAPools } from "../hooks/useModuleAPools"
 import { formatKaspa } from "../utils/kaspa"
-import { queryBatchSwap, executeBatchSwap, executeBatchSwapKASIn } from "../utils/evm"
-import { MODULE_A_ADDRESSES, TESTNET_TOKENS } from "../types"
+import { queryBatchSwap, executeBatchSwap, executeBatchSwapKASIn, queryStableSwap, executeStableSwap, approveToken, getTokenBalance, getProviderAddress } from "../utils/evm"
+import { MODULE_A_ADDRESSES, STABLESWAP_POOL_ADDRESS, TESTNET_TOKENS } from "../types"
 import type { TokenInfo, SwapStep } from "../types"
+
+const ADDRESS_TO_TICKER: Record<string, string> = {
+  [MODULE_A_ADDRESSES.wkas.toLowerCase()]: "WKAS",
+  "0xb0c9d7e1e5635a1fbfc8cfd75ce16ba1ccf2849": "USDC",
+  "0xa2e3e66262825ca2c6a7352d4f5a1ba9e82ff89c": "LINK",
+  "0x42134d776638d67e24cfa0d316f58b5e52cf885f": "WBTC",
+  "0xffe75a83620025ada3742b19163d7e9be2b2322f": "USDT",
+  "0xe3adce18f646bf44c263319abffb33b83f0b5a35": "TUSD",
+}
+
+const STABLE_TOKEN_ADDRESSES: Record<string, string> = {
+  USDC: "0xB0c9d7e1e5635a1FBFfC8CFD75CE16BA1ccf2849",
+  TUSD: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35",
+}
 
 const TOKEN_ADDRESS: Record<string, string> = {
   KAS: MODULE_A_ADDRESSES.wkas,
   WKAS: MODULE_A_ADDRESSES.wkas,
-  USDC: "0x1d5c117398cf5fcC4FeFF180c0867ac150eBD8bD",
-  LINK: "0x74b768D3E4DC62AEBfa5d95ce55E62aeD33033ea",
-  WBTC: "0xc5D68fbb18071C4a3c553d2f832715b66462387A",
+  USDC: "0xB0c9d7e1e5635a1FBFfC8CFD75CE16BA1ccf2849",
+  LINK: "0xa2E3e66262825cA2C6a7352d4F5a1Ba9E82Ff89c",
+  WBTC: "0x42134d776638D67e24cFA0d316f58B5e52cF885f",
   USDT: TESTNET_TOKENS.USDT.address,
+  TUSD: TESTNET_TOKENS.TUSD.address,
   NACHO: TESTNET_TOKENS.NACHO.address,
+}
+
+function isStableRoute(route: SwapStep[]): boolean {
+  return route.length === 1 && route[0].pool.toLowerCase() === STABLESWAP_POOL_ADDRESS.toLowerCase()
+}
+
+function getStableCoinIndex(tokenAddr: string): number {
+  const ticker = ADDRESS_TO_TICKER[tokenAddr.toLowerCase()]
+  if (ticker === "USDC") return 0
+  if (ticker === "TUSD") return 1
+  return -1
 }
 
 function findRoute(
@@ -66,6 +92,56 @@ export default function ModuleASwap() {
   const [swapError, setSwapError] = useState<string | null>(null)
   const [swapTx, setSwapTx] = useState<string | null>(null)
   const [quote, setQuote] = useState<number | null>(null)
+  const [userAddress, setUserAddress] = useState<string | null>(null)
+  const [fromBalance, setFromBalance] = useState<string>("—")
+  const [toBalance, setToBalance] = useState<string>("—")
+
+  useEffect(() => {
+    if (connected) {
+      getProviderAddress().then(setUserAddress).catch(() => setUserAddress(null))
+    } else {
+      setUserAddress(null)
+      setFromBalance("—")
+      setToBalance("—")
+    }
+  }, [connected])
+
+  useEffect(() => {
+    if (!connected || !userAddress) { setFromBalance("—"); setToBalance("—"); return }
+    let cancelled = false
+    const fetchBalances = async () => {
+      const fromTicker = fromToken.ticker
+      const toTicker = toToken.ticker
+
+      const getBalance = async (ticker: string): Promise<string> => {
+        if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
+          return formatKaspa(balanceRaw)
+        }
+        if (krc20Balances[ticker] !== undefined) {
+          return String(krc20Balances[ticker])
+        }
+        const addr = TOKEN_ADDRESS[ticker]
+        if (addr) {
+          try {
+            const bal = await getTokenBalance(addr, userAddress)
+            return ethers.formatEther(bal)
+          } catch {
+            return "—"
+          }
+        }
+        return "—"
+      }
+
+      const fb = await getBalance(fromTicker)
+      const tb = await getBalance(toTicker)
+      if (!cancelled) {
+        setFromBalance(fb)
+        setToBalance(tb)
+      }
+    }
+    fetchBalances()
+    return () => { cancelled = true }
+  }, [connected, userAddress, fromToken.ticker, toToken.ticker, balanceRaw, krc20Balances])
 
   const route = useMemo(() => {
     if (!fromToken || !toToken) return null
@@ -79,16 +155,33 @@ export default function ModuleASwap() {
     }
     let cancelled = false
     const amountIn = ethers.parseEther(fromAmount)
-    queryBatchSwap(route, amountIn).then(
-      (r) => { if (!cancelled) setQuote(Number(ethers.formatEther(r))) },
-      () => {
-        const fp = tokenPrice(fromToken.ticker)
-        const tp = tokenPrice(toToken.ticker)
-        if (fp.kas > 0 && tp.kas > 0 && !cancelled) {
-          setQuote(Number(fromAmount) * (fp.kas / tp.kas) * (1 - SWAP_FEE_PERCENT / 100))
+
+    if (isStableRoute(route)) {
+      const i = getStableCoinIndex(route[0].tokenIn)
+      const j = getStableCoinIndex(route[0].tokenOut)
+      if (i < 0 || j < 0) { setQuote(null); return }
+      queryStableSwap(STABLESWAP_POOL_ADDRESS, i, j, amountIn).then(
+        (r) => { if (!cancelled) setQuote(Number(ethers.formatEther(r))) },
+        () => {
+          const fp = tokenPrice(fromToken.ticker)
+          const tp = tokenPrice(toToken.ticker)
+          if (fp.kas > 0 && tp.kas > 0 && !cancelled) {
+            setQuote(Number(fromAmount) * (fp.kas / tp.kas) * (1 - SWAP_FEE_PERCENT / 100))
+          }
         }
-      }
-    )
+      )
+    } else {
+      queryBatchSwap(route, amountIn).then(
+        (r) => { if (!cancelled) setQuote(Number(ethers.formatEther(r))) },
+        () => {
+          const fp = tokenPrice(fromToken.ticker)
+          const tp = tokenPrice(toToken.ticker)
+          if (fp.kas > 0 && tp.kas > 0 && !cancelled) {
+            setQuote(Number(fromAmount) * (fp.kas / tp.kas) * (1 - SWAP_FEE_PERCENT / 100))
+          }
+        }
+      )
+    }
     return () => { cancelled = true }
   }, [fromAmount, route, tokenPrice, fromToken.ticker, toToken.ticker])
 
@@ -110,6 +203,8 @@ export default function ModuleASwap() {
   }, [])
 
   const handleFlip = useCallback(() => {
+    setFromBalance("—")
+    setToBalance("—")
     setFromToken(toToken)
     setToToken(fromToken)
     setFromAmount("")
@@ -126,12 +221,27 @@ export default function ModuleASwap() {
       const amountIn = ethers.parseEther(fromAmount)
       const minOut = ethers.parseEther(String(minReceived ?? 0))
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20
-      const isKASIn = fromToken.ticker === "KAS"
-      const tx = isKASIn
-        ? await executeBatchSwapKASIn(route, minOut, deadline, amountIn)
-        : await executeBatchSwap(route, amountIn, minOut, deadline)
-      setSwapTx(tx.hash)
-      await tx.wait()
+
+      if (isStableRoute(route)) {
+        const i = getStableCoinIndex(route[0].tokenIn)
+        const j = getStableCoinIndex(route[0].tokenOut)
+        if (i < 0 || j < 0) throw new Error("Invalid stable coin index")
+        const approveTx = await approveToken(route[0].tokenIn, STABLESWAP_POOL_ADDRESS, amountIn)
+        await approveTx.wait()
+        const tx = await executeStableSwap(STABLESWAP_POOL_ADDRESS, i, j, amountIn, minOut)
+        setSwapTx(tx.hash)
+        await tx.wait()
+      } else if (fromToken.ticker === "KAS") {
+        const tx = await executeBatchSwapKASIn(route, minOut, deadline, amountIn)
+        setSwapTx(tx.hash)
+        await tx.wait()
+      } else {
+        const approveTx = await approveToken(route[0].tokenIn, MODULE_A_ADDRESSES.vault, amountIn)
+        await approveTx.wait()
+        const tx = await executeBatchSwap(route, amountIn, minOut, deadline)
+        setSwapTx(tx.hash)
+        await tx.wait()
+      }
       setFromAmount("")
       setQuote(null)
     } catch (err) {
@@ -142,21 +252,15 @@ export default function ModuleASwap() {
   }, [connected, connect, fromAmount, route, minReceived, fromToken.ticker])
 
   const insufficientBalance = useMemo(() => {
-    if (!connected || !fromAmount || isNaN(Number(fromAmount))) return false
-    return Number(fromAmount) > balanceRaw
-  }, [connected, fromAmount, balanceRaw])
-
-  const isFromKas = fromToken.ticker === KASPA_TOKEN.ticker
-  const displayBalance = connected
-    ? isFromKas
-      ? formatKaspa(balanceRaw)
-      : krc20Balances[fromToken.ticker] !== undefined ? String(krc20Balances[fromToken.ticker]) : "—"
-    : "—"
+    if (!connected || !fromAmount || isNaN(Number(fromAmount)) || fromBalance === "—") return false
+    return Number(fromAmount) > Number(fromBalance)
+  }, [connected, fromAmount, fromBalance])
 
   const routeLabel = useMemo(() => {
     if (!route) return "No route"
     if (route.length === 0) return "Same token"
-    return `${route.length} step${route.length > 1 ? "s" : ""}`
+    if (isStableRoute(route)) return "1 step via StableSwap"
+    return `${route.length} step${route.length > 1 ? "s" : ""} via Weighted`
   }, [route])
 
   return (
@@ -178,7 +282,7 @@ export default function ModuleASwap() {
         <div className={`glass rounded-xl p-4 ${insufficientBalance ? "border border-kaspa-red/50" : ""}`}>
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You sell</span>
-            <span className="text-xs text-kaspa-muted">Balance: {displayBalance} {fromToken.ticker}</span>
+            <span className="text-xs text-kaspa-muted">Balance: {fromBalance} {fromToken.ticker}</span>
           </div>
           <div className="flex items-center gap-3">
             <input type="text" value={fromAmount} onChange={(e) => handleFromAmountChange(e.target.value)} placeholder="0.0" className="flex-1 bg-transparent border-0 p-0 text-2xl font-bold outline-none" />
@@ -197,6 +301,7 @@ export default function ModuleASwap() {
         <div className="glass rounded-xl p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You buy</span>
+            <span className="text-xs text-kaspa-muted">Balance: {toBalance} {toToken.ticker}</span>
           </div>
           <div className="flex items-center gap-3">
             <input type="text" value={quote !== null ? quote.toFixed(6) : ""} readOnly placeholder="0.0" className="flex-1 bg-transparent border-0 p-0 text-2xl font-bold outline-none text-kaspa-green" />
@@ -258,9 +363,11 @@ export default function ModuleASwap() {
           <TokenSelect
             onSelect={(token) => {
               if (selectingToken === "from") {
+                setFromBalance("—")
                 setFromToken(token)
                 if (token.ticker === toToken.ticker) setToToken(fromToken)
               } else {
+                setToBalance("—")
                 setToToken(token)
                 if (token.ticker === fromToken.ticker) setFromToken(toToken)
               }

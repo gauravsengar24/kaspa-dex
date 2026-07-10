@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart } from "lucide-react"
+import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet } from "lucide-react"
 import Header from "./components/Header"
 import SwapInterface from "./components/SwapInterface"
 import Orderbook from "./components/Orderbook"
@@ -18,11 +18,13 @@ import PerpFutures from "./components/PerpFutures"
 import Bridge from "./components/Bridge"
 import ModuleASwap from "./components/ModuleASwap"
 import ModuleAPools from "./components/ModuleAPools"
+import KaspaL1Swap from "./components/KaspaL1Swap"
+import WalletPage from "./components/WalletPage"
 import Footer from "./components/Footer"
 import { KASPA_TOKEN } from "./utils/constants"
 import { usePools } from "./hooks/usePools"
 
-export type TabId = "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge" | "module-a" | "module-a-pools"
+export type TabId = "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge" | "module-a" | "module-a-pools" | "l1-swap" | "wallet"
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("swap")
@@ -30,6 +32,8 @@ export default function App() {
 
   const tabs: { id: TabId; label: string; icon: any }[] = [
     { id: "swap", label: "Swap", icon: ArrowLeftRight },
+    { id: "l1-swap", label: "L1 DEX", icon: ArrowRightLeft },
+    { id: "wallet", label: "Wallet", icon: Wallet },
     { id: "module-a", label: "Mod A", icon: Layers },
     { id: "perps", label: "Perps", icon: Zap },
     { id: "pools", label: "Pools", icon: LayoutDashboard },
@@ -60,6 +64,10 @@ export default function App() {
             </div>
           </div>
         )
+      case "l1-swap":
+        return <KaspaL1Swap />
+      case "wallet":
+        return <WalletPage />
       case "perps":
         return <PerpFutures />
       case "pools":

@@ -218,6 +218,7 @@ export const TESTNET_TOKENS: Record<string, { address: string; decimals: number 
   KAS: { address: KASPLEX_TESTNET_ADDRESSES.wkas, decimals: 18 },
   USDT: { address: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f", decimals: 18 },
   NACHO: { address: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB", decimals: 18 },
+  TUSD: { address: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35", decimals: 18 },
 }
 
 export const TESTNET_POOLS: { pair: string; token0: string; token1: string }[] = [
@@ -230,9 +231,13 @@ export interface ModuleAContractAddresses {
   wkas: string
 }
 
+// Phase 2 & 3 contract addresses
+export const LENDING_POOL_ADDRESS = "0x4C3fd76D5998aEc6F0B964B82EF0B834F7fCd04A"
+export const STABLESWAP_POOL_ADDRESS = "0x9574FaE44Edc3A44269f2C5D668bB7f8f0AE6323"
+
 export const MODULE_A_ADDRESSES: ModuleAContractAddresses = {
-  factory: "0x6B5EaE0e7fE0E13467CF667356CdF14bdfb0BC21",
-  vault: "0x75cC7720f4A181F89C7A8ED25AD71F75EFda6347",
+  factory: "0x1eA9faA1B1A533e85f6C41E7B70f4ea4a50836d6",
+  vault: "0x05eba420e02749Ee1A7AECe8f2F3b4Db4d3C013C",
   wkas: "0xC065C62a10fB363fD31CA394D632C4Df106566df",
 }
 

@@ -228,4 +228,45 @@ export async function executeBatchSwapKASIn(
   return vault.batchSwapKASIn(steps, minAmountOut, deadline, { value })
 }
 
-export { WEIGHTED_POOL_ABI, MODULE_A_VAULT_ABI }
+const STABLESWAP_POOL_ABI = [
+  "function exchange(uint256 i, uint256 j, uint256 dx, uint256 minDy) returns (uint256)",
+  "function getDy(uint256 i, uint256 j, uint256 dx) view returns (uint256)",
+  "function coins(uint256) view returns (address)",
+  "function getBalances() view returns (uint256[])",
+  "function A() view returns (uint256)",
+  "function fee() view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+]
+
+export function getStableSwapPoolContract(
+  poolAddress: string,
+  signerOrProvider?: ethers.Provider | ethers.Signer
+): Contract {
+  return new Contract(poolAddress, STABLESWAP_POOL_ABI, signerOrProvider ?? getRpcProvider())
+}
+
+export async function queryStableSwap(
+  poolAddress: string,
+  i: number,
+  j: number,
+  dx: bigint
+): Promise<bigint> {
+  const pool = getStableSwapPoolContract(poolAddress, getRpcProvider())
+  return pool.getDy(i, j, dx) as Promise<bigint>
+}
+
+export async function executeStableSwap(
+  poolAddress: string,
+  i: number,
+  j: number,
+  dx: bigint,
+  minDy: bigint
+): Promise<ethers.TransactionResponse> {
+  const provider = await getSignerProvider()
+  const signer = await provider.getSigner()
+  const pool = getStableSwapPoolContract(poolAddress, signer)
+  return pool.exchange(i, j, dx, minDy)
+}
+
+export { WEIGHTED_POOL_ABI, MODULE_A_VAULT_ABI, STABLESWAP_POOL_ABI }
