@@ -93,43 +93,43 @@ export default function ModuleASwap() {
   const [swapTx, setSwapTx] = useState<string | null>(null)
   const [quote, setQuote] = useState<number | null>(null)
   const [userAddress, setUserAddress] = useState<string | null>(null)
-  const [fromBalance, setFromBalance] = useState<string>("—")
-  const [toBalance, setToBalance] = useState<string>("—")
+  const [fromBalance, setFromBalance] = useState<number | null>(null)
+  const [toBalance, setToBalance] = useState<number | null>(null)
 
   useEffect(() => {
     if (connected) {
       getProviderAddress().then(setUserAddress).catch(() => setUserAddress(null))
     } else {
       setUserAddress(null)
-      setFromBalance("—")
-      setToBalance("—")
+      setFromBalance(null)
+      setToBalance(null)
     }
   }, [connected])
 
   useEffect(() => {
-    if (!connected || !userAddress) { setFromBalance("—"); setToBalance("—"); return }
+    if (!connected || !userAddress) { setFromBalance(null); setToBalance(null); return }
     let cancelled = false
     const fetchBalances = async () => {
       const fromTicker = fromToken.ticker
       const toTicker = toToken.ticker
 
-      const getBalance = async (ticker: string): Promise<string> => {
+      const getBalance = async (ticker: string): Promise<number | null> => {
         if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
-          return formatKaspa(balanceRaw)
+          return balanceRaw
         }
         const addr = TOKEN_ADDRESS[ticker]
         if (addr) {
           try {
             const bal = await getTokenBalance(addr, userAddress)
-            return ethers.formatEther(bal)
+            return Number(ethers.formatEther(bal))
           } catch {
-            return "—"
+            return null
           }
         }
         if (krc20Balances[ticker] !== undefined) {
-          return String(krc20Balances[ticker])
+          return krc20Balances[ticker]
         }
-        return "—"
+        return null
       }
 
       const fb = await getBalance(fromTicker)
@@ -203,8 +203,8 @@ export default function ModuleASwap() {
   }, [])
 
   const handleFlip = useCallback(() => {
-    setFromBalance("—")
-    setToBalance("—")
+    setFromBalance(null)
+    setToBalance(null)
     setFromToken(toToken)
     setToToken(fromToken)
     setFromAmount("")
@@ -229,31 +229,39 @@ export default function ModuleASwap() {
         const approveTx = await approveToken(route[0].tokenIn, STABLESWAP_POOL_ADDRESS, amountIn)
         await approveTx.wait()
         const tx = await executeStableSwap(STABLESWAP_POOL_ADDRESS, i, j, amountIn, minOut)
-        setSwapTx(tx.hash)
         await tx.wait()
+        setSwapTx(tx.hash)
       } else if (fromToken.ticker === "KAS") {
         const tx = await executeBatchSwapKASIn(route, minOut, deadline, amountIn)
-        setSwapTx(tx.hash)
         await tx.wait()
+        setSwapTx(tx.hash)
       } else {
         const approveTx = await approveToken(route[0].tokenIn, MODULE_A_ADDRESSES.vault, amountIn)
         await approveTx.wait()
         const tx = await executeBatchSwap(route, amountIn, minOut, deadline)
-        setSwapTx(tx.hash)
         await tx.wait()
+        setSwapTx(tx.hash)
       }
       setFromAmount("")
       setQuote(null)
     } catch (err) {
+      setSwapTx(null)
       setSwapError(err instanceof Error ? err.message : "Swap failed")
     } finally {
       setSwapping(false)
     }
   }, [connected, connect, fromAmount, route, minReceived, fromToken.ticker])
 
+  const displayBalance = useCallback((bal: number | null, ticker: string): string => {
+    if (bal === null) return "—"
+    if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") return formatKaspa(bal)
+    return String(bal)
+  }, [])
+
   const insufficientBalance = useMemo(() => {
-    if (!connected || !fromAmount || isNaN(Number(fromAmount)) || fromBalance === "—") return false
-    return Number(fromAmount) > Number(fromBalance)
+    if (!connected || !fromAmount || isNaN(Number(fromAmount))) return false
+    if (fromBalance === null) return true
+    return Number(fromAmount) > fromBalance
   }, [connected, fromAmount, fromBalance])
 
   const routeLabel = useMemo(() => {
@@ -282,7 +290,7 @@ export default function ModuleASwap() {
         <div className={`glass rounded-xl p-4 ${insufficientBalance ? "border border-kaspa-red/50" : ""}`}>
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You sell</span>
-            <span className="text-xs text-kaspa-muted">Balance: {fromBalance} {fromToken.ticker}</span>
+            <span className="text-xs text-kaspa-muted">Balance: {displayBalance(fromBalance, fromToken.ticker)} {fromToken.ticker}</span>
           </div>
           <div className="flex items-center gap-3">
             <input type="text" value={fromAmount} onChange={(e) => handleFromAmountChange(e.target.value)} placeholder="0.0" className="flex-1 bg-transparent border-0 p-0 text-2xl font-bold outline-none" />
@@ -301,7 +309,7 @@ export default function ModuleASwap() {
         <div className="glass rounded-xl p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You buy</span>
-            <span className="text-xs text-kaspa-muted">Balance: {toBalance} {toToken.ticker}</span>
+            <span className="text-xs text-kaspa-muted">Balance: {displayBalance(toBalance, toToken.ticker)} {toToken.ticker}</span>
           </div>
           <div className="flex items-center gap-3">
             <input type="text" value={quote !== null ? quote.toFixed(6) : ""} readOnly placeholder="0.0" className="flex-1 bg-transparent border-0 p-0 text-2xl font-bold outline-none text-kaspa-green" />
@@ -363,11 +371,11 @@ export default function ModuleASwap() {
           <TokenSelect
             onSelect={(token) => {
               if (selectingToken === "from") {
-                setFromBalance("—")
+                setFromBalance(null)
                 setFromToken(token)
                 if (token.ticker === toToken.ticker) setToToken(fromToken)
               } else {
-                setToBalance("—")
+                setToBalance(null)
                 setToToken(token)
                 if (token.ticker === fromToken.ticker) setFromToken(toToken)
               }

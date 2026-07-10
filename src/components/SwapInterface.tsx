@@ -54,40 +54,40 @@ export default function SwapInterface() {
   const [swapError, setSwapError] = useState<string | null>(null)
   const [swapTx, setSwapTx] = useState<string | null>(null)
   const [userAddress, setUserAddress] = useState<string | null>(null)
-  const [fromBalance, setFromBalance] = useState<string>("—")
-  const [toBalance, setToBalance] = useState<string>("—")
+  const [fromBalance, setFromBalance] = useState<number | null>(null)
+  const [toBalance, setToBalance] = useState<number | null>(null)
 
   useEffect(() => {
     if (connected) {
       getProviderAddress().then(setUserAddress).catch(() => setUserAddress(null))
     } else {
       setUserAddress(null)
-      setFromBalance("—")
-      setToBalance("—")
+      setFromBalance(null)
+      setToBalance(null)
     }
   }, [connected])
 
   useEffect(() => {
-    if (!connected || !userAddress) { setFromBalance("—"); setToBalance("—"); return }
+    if (!connected || !userAddress) { setFromBalance(null); setToBalance(null); return }
     let cancelled = false
     const fetchBalances = async () => {
-      const getBalance = async (ticker: string): Promise<string> => {
+      const getBalance = async (ticker: string): Promise<number | null> => {
         if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
-          return formatKaspa(balanceRaw)
+          return balanceRaw
         }
         const evmAddr = getTokenAddress(ticker)
         if (evmAddr) {
           try {
             const bal = await getEvmTokenBalance(evmAddr, userAddress)
-            return ethers.formatEther(bal)
+            return Number(ethers.formatEther(bal))
           } catch {
-            return "—"
+            return null
           }
         }
         if (krc20Balances[ticker] !== undefined) {
-          return String(krc20Balances[ticker])
+          return krc20Balances[ticker]
         }
-        return "—"
+        return null
       }
       const fb = await getBalance(fromToken.ticker)
       const tb = await getBalance(toToken.ticker)
@@ -165,8 +165,8 @@ export default function SwapInterface() {
     setSwapError(null)
     setSwapTx(null)
     setTimeout(() => {
-      setFromBalance("—")
-      setToBalance("—")
+      setFromBalance(null)
+      setToBalance(null)
       setFromToken(toToken)
       setToToken(fromToken)
       setFromAmount("")
@@ -220,7 +220,6 @@ export default function SwapInterface() {
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20
       const tx = await executeSwap(amountIn, amountOutMin, path, deadline)
-      setSwapTx(tx.hash)
       await tx.wait()
 
       if (isToNative) {
@@ -228,17 +227,26 @@ export default function SwapInterface() {
         await unwrapTx.wait()
       }
 
+      setSwapTx(tx.hash)
       setFromAmount("")
     } catch (err) {
+      setSwapTx(null)
       setSwapError(err instanceof Error ? err.message : "Swap failed")
     } finally {
       setSwapping(false)
     }
   }, [connected, connect, fromAmount, estimatedOutput, fromToken.ticker, toToken.ticker, getTokenAddress])
 
+  const displayBalance = useCallback((bal: number | null, ticker: string): string => {
+    if (bal === null) return "—"
+    if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") return formatKaspa(bal)
+    return String(bal)
+  }, [])
+
   const insufficientBalance = useMemo(() => {
-    if (!connected || !fromAmount || isNaN(Number(fromAmount)) || fromBalance === "—") return false
-    return Number(fromAmount) > Number(fromBalance)
+    if (!connected || !fromAmount || isNaN(Number(fromAmount))) return false
+    if (fromBalance === null) return true
+    return Number(fromAmount) > fromBalance
   }, [connected, fromAmount, fromBalance])
 
   const kasUsdPrice = prices.kas.usd > 0 ? formatUsd(prices.kas.usd) : "—"
@@ -301,7 +309,7 @@ export default function SwapInterface() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You sell</span>
             <span className="text-xs text-kaspa-muted">
-              Balance: {fromBalance} {fromToken.ticker}
+              Balance: {displayBalance(fromBalance, fromToken.ticker)} {fromToken.ticker}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -344,7 +352,7 @@ export default function SwapInterface() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-kaspa-muted">You buy</span>
             <span className="text-xs text-kaspa-muted">
-              Balance: {toBalance} {toToken.ticker}
+              Balance: {displayBalance(toBalance, toToken.ticker)} {toToken.ticker}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -448,7 +456,7 @@ export default function SwapInterface() {
 
         {insufficientBalance && fromAmount && (
           <div className="glass rounded-xl p-3 text-sm text-kaspa-red text-center">
-            Insufficient {fromToken.ticker} balance{connected ? ` — you have ${fromBalance} ${fromToken.ticker}` : ""}
+            Insufficient {fromToken.ticker} balance{connected ? ` — you have ${displayBalance(fromBalance, fromToken.ticker)} ${fromToken.ticker}` : ""}
           </div>
         )}
 
@@ -480,11 +488,11 @@ export default function SwapInterface() {
           <TokenSelect
             onSelect={(token) => {
               if (selectingToken === "from") {
-                setFromBalance("—")
+                setFromBalance(null)
                 setFromToken(token)
                 if (token.ticker === toToken.ticker) setToToken(fromToken)
               } else {
-                setToBalance("—")
+                setToBalance(null)
                 setToToken(token)
                 if (token.ticker === fromToken.ticker) setFromToken(toToken)
               }
