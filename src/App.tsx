@@ -80,6 +80,11 @@ export default function App() {
               </div>
               <button className="btn-primary px-6">+ New Position</button>
             </div>
+            {pools.length === 0 && (
+              <div className="col-span-full text-center text-kaspa-muted text-sm py-12">
+                No liquidity pools deployed yet. Create a pair to get started.
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {pools.length === 0 && (
                 <div className="col-span-full text-center text-kaspa-muted text-sm py-12">

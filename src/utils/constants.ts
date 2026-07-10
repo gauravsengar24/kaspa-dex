@@ -10,12 +10,17 @@ export const KASPA_TOKEN: TokenInfo = {
   isKrc20: false,
 }
 
+const KRC20_TOKEN_ADDRESSES: Record<string, string> = {
+  KASPY: "0x022fb99D9563858E296F572Ba4d85F268042850F",
+  GHOST: "0x3533ff5E15be8D650D089c39B43797451e53F5cD",
+}
+
 export const TOKENS: TokenInfo[] = [
   KASPA_TOKEN,
   { ticker: "USDT", name: "Tether USD", decimals: 18, icon: "💵", address: TESTNET_TOKENS.USDT.address, isKrc20: false },
   { ticker: "NACHO", name: "Nacho Coin", decimals: 18, icon: "🌮", address: TESTNET_TOKENS.NACHO.address, isKrc20: false },
-  { ticker: "KASPY", name: "Kaspy Token", decimals: 8, icon: "🐕", address: undefined, isKrc20: true },
-  { ticker: "GHOST", name: "Ghost KAS", decimals: 8, icon: "👻", address: undefined, isKrc20: true },
+  { ticker: "KASPY", name: "Kaspy Token", decimals: 18, icon: "🐕", address: KRC20_TOKEN_ADDRESSES.KASPY, isKrc20: false },
+  { ticker: "GHOST", name: "Ghost KAS", decimals: 18, icon: "👻", address: KRC20_TOKEN_ADDRESSES.GHOST, isKrc20: false },
   { ticker: "KASPER", name: "Kasper", decimals: 8, icon: "💎", address: undefined, isKrc20: true },
   { ticker: "PEPEK", name: "Pepes on KAS", decimals: 8, icon: "🐸", address: undefined, isKrc20: true },
   { ticker: "KISHU", name: "Kishu Inu", decimals: 8, icon: "🐶", address: undefined, isKrc20: true },

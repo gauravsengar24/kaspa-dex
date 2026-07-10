@@ -13,35 +13,36 @@ import {
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
 import { usePools } from "../hooks/usePools"
+import { useModuleAPools } from "../hooks/useModuleAPools"
 import { formatKaspa, formatUsd } from "../utils/kaspa"
 import {
-  fetchPairReserves,
-  executeSwap,
-  approveToken,
   getProviderAddress,
-  getRpcProvider,
-  wrapKAS,
-  unwrapWKAS,
   getTokenBalance as getEvmTokenBalance,
 } from "../utils/evm"
-import { KASPLEX_TESTNET_ADDRESSES } from "../types"
+import { findRoute, queryRoute, executeRoute } from "../utils/router"
+import { MODULE_A_ADDRESSES, STABLESWAP_POOL_ADDRESS, KASPLEX_TESTNET_ADDRESSES } from "../types"
 import type { TokenInfo } from "../types"
 
+const WKAS = KASPLEX_TESTNET_ADDRESSES.wkas
+
 const TOKEN_ADDRESS_MAP: Record<string, string> = {
-  KAS: KASPLEX_TESTNET_ADDRESSES.wkas,
-  WKAS: KASPLEX_TESTNET_ADDRESSES.wkas,
+  KAS: WKAS,
+  WKAS: WKAS,
   USDC: "0xB0c9d7e1e5635a1FBFfC8CFD75CE16BA1ccf2849",
   USDT: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f",
   WBTC: "0x42134d776638D67e24cFA0d316f58B5e52cF885f",
   LINK: "0xa2E3e66262825cA2C6a7352d4F5a1Ba9E82Ff89c",
   TUSD: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35",
   NACHO: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB",
+  KASPY: "0x022fb99D9563858E296F572Ba4d85F268042850F",
+  GHOST: "0x3533ff5E15be8D650D089c39B43797451e53F5cD",
 }
 
 export default function SwapInterface() {
   const { connected, connect, balanceRaw, balanceFormatted, connecting, krc20Balances, address } = useKaspaWallet()
   const { prices, tokenPrice } = usePrices()
-  const { pools, loading } = usePools()
+  const { pools: cpmmPools, loading: cpmmLoading } = usePools()
+  const { pools: moduleAPools, loading: moduleALoading } = useModuleAPools()
   const [fromToken, setFromToken] = useState<TokenInfo>(KASPA_TOKEN)
   const [toToken, setToToken] = useState<TokenInfo>(TOKENS[1])
   const [fromAmount, setFromAmount] = useState("")
@@ -72,33 +73,40 @@ export default function SwapInterface() {
     let cancelled = false
     const fetchBalances = async () => {
       const getBalance = async (ticker: string): Promise<number | null> => {
-        if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
-          return balanceRaw
-        }
-        const evmAddr = getTokenAddress(ticker)
+        if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") return balanceRaw
+        const evmAddr = TOKEN_ADDRESS_MAP[ticker]
         if (evmAddr) {
           try {
             const bal = await getEvmTokenBalance(evmAddr, userAddress)
             return Number(ethers.formatEther(bal))
-          } catch {
-            return null
-          }
+          } catch { return null }
         }
-        if (krc20Balances[ticker] !== undefined) {
-          return krc20Balances[ticker]
-        }
+        if (krc20Balances[ticker] !== undefined) return krc20Balances[ticker]
         return null
       }
       const fb = await getBalance(fromToken.ticker)
       const tb = await getBalance(toToken.ticker)
-      if (!cancelled) {
-        setFromBalance(fb)
-        setToBalance(tb)
-      }
+      if (!cancelled) { setFromBalance(fb); setToBalance(tb) }
     }
     fetchBalances()
     return () => { cancelled = true }
   }, [connected, userAddress, fromToken.ticker, toToken.ticker, balanceRaw, krc20Balances])
+
+  const poolsContext = useMemo(() => ({
+    cpmm: cpmmPools.map((p) => ({ pairAddress: p.id, token0: TOKEN_ADDRESS_MAP[p.token0 === "KAS" ? "WKAS" : p.token0] || p.id, token1: TOKEN_ADDRESS_MAP[p.token1 === "KAS" ? "WKAS" : p.token1] || p.id })),
+    weighted: moduleAPools.filter((p) => p.poolAddress !== STABLESWAP_POOL_ADDRESS).map((p) => ({
+      poolAddress: p.poolAddress,
+      tokens: p.tokens.map((t) => ({ ticker: t.ticker, address: TOKEN_ADDRESS_MAP[t.ticker] || t.address })),
+    })),
+    stable: moduleAPools.filter((p) => p.poolAddress === STABLESWAP_POOL_ADDRESS).map((p) => ({
+      poolAddress: p.poolAddress,
+      tokens: p.tokens.map((t) => ({ ticker: t.ticker, address: TOKEN_ADDRESS_MAP[t.ticker] || t.address })),
+    })),
+  }), [cpmmPools, moduleAPools])
+
+  const route = useMemo(() => {
+    return findRoute(fromToken.ticker, toToken.ticker, TOKEN_ADDRESS_MAP, poolsContext)
+  }, [fromToken.ticker, toToken.ticker, poolsContext])
 
   const liveRate = useMemo(() => {
     const fp = tokenPrice(fromToken.ticker)
@@ -107,32 +115,36 @@ export default function SwapInterface() {
     return null
   }, [fromToken.ticker, toToken.ticker, tokenPrice])
 
-  const estimatedOutput = useMemo(() => {
-    if (!fromAmount || isNaN(Number(fromAmount)) || Number(fromAmount) <= 0) return null
-    const inputNum = Number(fromAmount)
+  const [estimatedOutput, setEstimatedOutput] = useState<number | null>(null)
+  const [quoting, setQuoting] = useState(false)
 
-    const pair = pools.find(
-      (p) =>
-        (p.token0 === fromToken.ticker && p.token1 === toToken.ticker) ||
-        (p.token0 === toToken.ticker && p.token1 === fromToken.ticker)
-    )
-    if (pair) {
-      const tok0In = pair.token0 === fromToken.ticker
-      const rIn = tok0In ? Number(pair.reserve0) : Number(pair.reserve1)
-      const rOut = tok0In ? Number(pair.reserve1) : Number(pair.reserve0)
-      if (rIn > 0 && rOut > 0) {
-        const fee = inputNum * (SWAP_FEE_PERCENT / 100)
-        const effectiveInput = inputNum - fee
-        const numerator = effectiveInput * rOut
-        const denominator = rIn + effectiveInput
-        return numerator / denominator
-      }
+  useEffect(() => {
+    if (!fromAmount || isNaN(Number(fromAmount)) || Number(fromAmount) <= 0 || !route || route.length === 0) {
+      setEstimatedOutput(null)
+      return
     }
-    if (liveRate) {
-      return inputNum * liveRate * (1 - SWAP_FEE_PERCENT / 100)
+    let cancelled = false
+    const doQuote = async () => {
+      setQuoting(true)
+      try {
+        const amountIn = ethers.parseEther(fromAmount)
+        const out = await queryRoute(route, amountIn)
+        if (!cancelled) {
+          setEstimatedOutput(out !== null ? Number(ethers.formatEther(out)) : null)
+        }
+      } catch {
+        if (!cancelled) {
+          const fp = tokenPrice(fromToken.ticker)
+          const tp = tokenPrice(toToken.ticker)
+          if (fp.kas > 0 && tp.kas > 0 && !cancelled) {
+            setEstimatedOutput(Number(fromAmount) * (fp.kas / tp.kas) * (1 - SWAP_FEE_PERCENT / 100))
+          }
+        }
+      } finally { if (!cancelled) setQuoting(false) }
     }
-    return null
-  }, [fromAmount, liveRate, fromToken.ticker, toToken.ticker, pools])
+    doQuote()
+    return () => { cancelled = true }
+  }, [fromAmount, route, tokenPrice, fromToken.ticker, toToken.ticker])
 
   const priceImpact = useMemo(() => {
     if (!estimatedOutput || !fromAmount) return 0
@@ -155,15 +167,14 @@ export default function SwapInterface() {
   }, [fromAmount, fromToken.ticker, tokenPrice])
 
   const handleFromAmountChange = useCallback((value: string) => {
-    if (/^\d*\.?\d*$/.test(value)) {
-      setFromAmount(value)
-    }
+    if (/^\d*\.?\d*$/.test(value)) setFromAmount(value)
   }, [])
 
   const handleFlip = useCallback(() => {
     setFlipping(true)
     setSwapError(null)
     setSwapTx(null)
+    setEstimatedOutput(null)
     setTimeout(() => {
       setFromBalance(null)
       setToBalance(null)
@@ -175,67 +186,28 @@ export default function SwapInterface() {
     }, 150)
   }, [fromToken, toToken])
 
-  const getTokenAddress = useCallback((ticker: string): string | null => {
-    return TOKEN_ADDRESS_MAP[ticker] ?? null
-  }, [])
-
   const handleSwap = useCallback(async () => {
-    if (!connected) {
-      await connect()
-      return
-    }
-    if (!fromAmount || Number(fromAmount) <= 0 || !estimatedOutput) return
+    if (!connected) { await connect(); return }
+    if (!fromAmount || Number(fromAmount) <= 0 || !route || route.length === 0 || !estimatedOutput) return
 
     setSwapping(true)
     setSwapError(null)
     setSwapTx(null)
 
     try {
-      const fromAddr = getTokenAddress(fromToken.ticker)
-      const toAddr = getTokenAddress(toToken.ticker)
-      if (!fromAddr || !toAddr) {
-        throw new Error(`Unsupported token pair: ${fromToken.ticker} → ${toToken.ticker}`)
-      }
-
       const amountIn = ethers.parseEther(fromAmount)
-      const amountOutMin = ethers.parseEther(estimatedOutput.toFixed(18))
-
-      let actualFrom = fromAddr
-      let actualTo = toAddr
-      const isFromNative = fromToken.ticker === "KAS"
-      const isToNative = toToken.ticker === "KAS"
-
-      if (isFromNative) {
-        const wrapTx = await wrapKAS(amountIn)
-        await wrapTx.wait()
-        actualFrom = KASPLEX_TESTNET_ADDRESSES.wkas
-      }
-
-      const wkasAddr = KASPLEX_TESTNET_ADDRESSES.wkas
-      const path = isToNative ? [actualFrom, wkasAddr] : [actualFrom, actualTo]
-
-      if (actualFrom !== wkasAddr) {
-        await approveToken(actualFrom, KASPLEX_TESTNET_ADDRESSES.router, amountIn)
-      }
-
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 20
-      const tx = await executeSwap(amountIn, amountOutMin, path, deadline)
-      await tx.wait()
-
-      if (isToNative) {
-        const unwrapTx = await unwrapWKAS(amountOutMin)
-        await unwrapTx.wait()
-      }
-
-      setSwapTx(tx.hash)
+      const minOut = ethers.parseEther(minReceived!.toFixed(18))
+      const receipt = await executeRoute(route, amountIn, minOut, fromToken.ticker)
+      setSwapTx(receipt.hash)
       setFromAmount("")
+      setEstimatedOutput(null)
     } catch (err) {
       setSwapTx(null)
       setSwapError(err instanceof Error ? err.message : "Swap failed")
     } finally {
       setSwapping(false)
     }
-  }, [connected, connect, fromAmount, estimatedOutput, fromToken.ticker, toToken.ticker, getTokenAddress])
+  }, [connected, connect, fromAmount, estimatedOutput, minReceived, route, fromToken.ticker])
 
   const displayBalance = useCallback((bal: number | null, ticker: string): string => {
     if (bal === null) return "—"
@@ -251,6 +223,14 @@ export default function SwapInterface() {
 
   const kasUsdPrice = prices.kas.usd > 0 ? formatUsd(prices.kas.usd) : "—"
 
+  const routeLabel = useMemo(() => {
+    if (!route) return "No route"
+    if (route.length === 0) return "Same token"
+    const types = [...new Set(route.map((r) => r.poolType))]
+    const typeLabel = types.includes("stable") ? "StableSwap" : types.includes("weighted") ? "Weighted" : "CPMM"
+    return `${route.length} step${route.length > 1 ? "s" : ""} via ${typeLabel}`
+  }, [route])
+
   return (
     <div className="glass rounded-2xl p-1">
       <div className="p-5 border-b border-kaspa-border/50">
@@ -260,12 +240,11 @@ export default function SwapInterface() {
             <p className="text-xs text-kaspa-muted mt-0.5">KAS • {kasUsdPrice}</p>
           </div>
           <div className="flex items-center gap-2">
+            {route && route.length > 0 && (
+              <span className="text-[10px] bg-kaspa-purple/20 text-kaspa-purple px-2 py-1 rounded-full">{routeLabel}</span>
+            )}
             <div className="relative">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="btn-secondary p-2"
-                aria-label="Settings"
-              >
+              <button onClick={() => setShowSettings(!showSettings)} className="btn-secondary p-2" aria-label="Settings">
                 <Settings size={16} />
               </button>
               <AnimatePresence>
@@ -284,18 +263,13 @@ export default function SwapInterface() {
                           key={s}
                           onClick={() => setSlippage(s)}
                           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                            slippage === s
-                              ? "bg-kaspa-pink text-white"
-                              : "bg-white/5 hover:bg-white/10 text-kaspa-muted"
+                            slippage === s ? "bg-kaspa-pink text-white" : "bg-white/5 hover:bg-white/10 text-kaspa-muted"
                           }`}
                         >
                           {s}%
                         </button>
                       ))}
                     </div>
-                    <p className="text-xs text-kaspa-muted mt-2">
-                      Your transaction will revert if the price changes by more than this amount.
-                    </p>
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -358,7 +332,7 @@ export default function SwapInterface() {
           <div className="flex items-center gap-3">
             <input
               type="text"
-              value={toAmount}
+              value={estimatedOutput !== null ? estimatedOutput.toFixed(6) : toAmount}
               readOnly
               placeholder="0.0"
               className="flex-1 bg-transparent border-0 p-0 text-2xl font-bold outline-none text-kaspa-green"
@@ -377,23 +351,13 @@ export default function SwapInterface() {
         {liveRate !== null && (
           <div className="flex items-center justify-center gap-1 text-xs text-kaspa-muted py-1">
             <span className="w-1.5 h-1.5 rounded-full bg-kaspa-green" />
-            {prices.kas.usd > 0 && (
-              <span>1 KAS = {formatUsd(prices.kas.usd)}</span>
-            )}
+            {prices.kas.usd > 0 && <span>1 KAS = {formatUsd(prices.kas.usd)}</span>}
             <span className="mx-1.5">•</span>
-            <span>
-              1 {fromToken.ticker} ≈ {liveRate.toFixed(6)} {toToken.ticker}
-            </span>
+            <span>1 {fromToken.ticker} ≈ {liveRate.toFixed(6)} {toToken.ticker}</span>
           </div>
         )}
 
-        {pools.length === 0 && !loading && (
-          <div className="text-center text-sm text-kaspa-muted py-3">
-            No liquidity pools yet. Deploy a pair to enable swaps.
-          </div>
-        )}
-
-        {estimatedOutput !== null && fromAmount && pools.length > 0 && (
+        {estimatedOutput !== null && fromAmount && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -401,57 +365,40 @@ export default function SwapInterface() {
           >
             <div className="flex justify-between">
               <span className="text-kaspa-muted">Rate</span>
-              <span>
-                1 {fromToken.ticker} = {liveRate?.toFixed(6) || "—"} {toToken.ticker}
-              </span>
+              <span>1 {fromToken.ticker} = {liveRate?.toFixed(6) || "—"} {toToken.ticker}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-kaspa-muted">Price impact</span>
-              <span
-                className={
-                  priceImpact > 1
-                    ? "text-kaspa-red"
-                    : priceImpact > 0.5
-                      ? "text-kaspa-gold"
-                      : "text-kaspa-green"
-                }
-              >
-                {priceImpact.toFixed(2)}%
-              </span>
+              <span className={priceImpact > 1 ? "text-kaspa-red" : priceImpact > 0.5 ? "text-kaspa-gold" : "text-kaspa-green"}>{priceImpact.toFixed(2)}%</span>
             </div>
             <div className="flex justify-between">
               <span className="text-kaspa-muted">Min. received</span>
-              <span>
-                {formatKaspa(minReceived!)} {toToken.ticker}
-              </span>
+              <span>{formatKaspa(minReceived!)} {toToken.ticker}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-kaspa-muted">Fee ({SWAP_FEE_PERCENT}%)</span>
-              <span>
-                {(Number(fromAmount) * SWAP_FEE_PERCENT / 100).toFixed(6)} {fromToken.ticker}
+              <span className="text-kaspa-muted">Fee</span>
+              <span>{(Number(fromAmount) * SWAP_FEE_PERCENT / 100).toFixed(6)} {fromToken.ticker}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-kaspa-muted">Route</span>
+              <span className={route?.[0]?.poolType === "stable" ? "text-kaspa-cyan" : route?.[0]?.poolType === "weighted" ? "text-kaspa-purple" : "text-kaspa-green"}>
+                {routeLabel}
               </span>
             </div>
           </motion.div>
         )}
 
+        {quoting && <div className="text-xs text-kaspa-muted text-center py-1">Getting quote...</div>}
+
         {swapTx && (
           <div className="glass rounded-xl p-3 text-sm text-kaspa-green text-center">
-            Swap successful!{" "}
-            <a
-              href={`https://explorer.testnet.kasplextest.xyz/tx/${swapTx}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
-              View tx
-            </a>
+            Swap submitted!{" "}
+            <a href={`https://explorer.testnet.kasplextest.xyz/tx/${swapTx}`} target="_blank" rel="noopener noreferrer" className="underline">View tx</a>
           </div>
         )}
 
         {swapError && (
-          <div className="glass rounded-xl p-3 text-sm text-kaspa-red text-center">
-            {swapError}
-          </div>
+          <div className="glass rounded-xl p-3 text-sm text-kaspa-red text-center">{swapError}</div>
         )}
 
         {insufficientBalance && fromAmount && (
@@ -462,24 +409,15 @@ export default function SwapInterface() {
 
         <button
           onClick={handleSwap}
-          disabled={
-            !fromAmount || Number(fromAmount) <= 0 || insufficientBalance || connecting || swapping
-          }
+          disabled={!fromAmount || Number(fromAmount) <= 0 || insufficientBalance || connecting || swapping || quoting || !route || route.length === 0}
           className="btn-primary w-full mt-2"
         >
-          {swapping
-            ? "Swapping..."
-            : connecting
-              ? "Connecting..."
-              : !connected
-                ? "Connect Wallet"
-                : insufficientBalance
-                  ? `Insufficient ${fromToken.ticker}`
-                  : !fromAmount || Number(fromAmount) <= 0
-                    ? "Enter an amount"
-                    : pools.length === 0
-                      ? "No pools available"
-                      : "Swap"}
+          {swapping ? "Swapping..." : connecting ? "Connecting..." : !connected ? "Connect Wallet"
+            : insufficientBalance ? `Insufficient ${fromToken.ticker}`
+            : !fromAmount || Number(fromAmount) <= 0 ? "Enter an amount"
+            : !route ? "No route available"
+            : quoting ? "Getting quote..."
+            : "Swap"}
         </button>
       </div>
 
