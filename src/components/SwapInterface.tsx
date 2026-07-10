@@ -27,6 +27,17 @@ import {
 import { KASPLEX_TESTNET_ADDRESSES } from "../types"
 import type { TokenInfo } from "../types"
 
+const TOKEN_ADDRESS_MAP: Record<string, string> = {
+  KAS: KASPLEX_TESTNET_ADDRESSES.wkas,
+  WKAS: KASPLEX_TESTNET_ADDRESSES.wkas,
+  USDC: "0xB0c9d7e1e5635a1FBFfC8CFD75CE16BA1ccf2849",
+  USDT: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f",
+  WBTC: "0x42134d776638D67e24cFA0d316f58B5e52cF885f",
+  LINK: "0xa2E3e66262825cA2C6a7352d4F5a1Ba9E82Ff89c",
+  TUSD: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35",
+  NACHO: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB",
+}
+
 export default function SwapInterface() {
   const { connected, connect, balanceRaw, balanceFormatted, connecting, krc20Balances, address } = useKaspaWallet()
   const { prices, tokenPrice } = usePrices()
@@ -64,9 +75,6 @@ export default function SwapInterface() {
         if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
           return formatKaspa(balanceRaw)
         }
-        if (krc20Balances[ticker] !== undefined) {
-          return String(krc20Balances[ticker])
-        }
         const evmAddr = getTokenAddress(ticker)
         if (evmAddr) {
           try {
@@ -75,6 +83,9 @@ export default function SwapInterface() {
           } catch {
             return "—"
           }
+        }
+        if (krc20Balances[ticker] !== undefined) {
+          return String(krc20Balances[ticker])
         }
         return "—"
       }
@@ -163,17 +174,6 @@ export default function SwapInterface() {
       setFlipping(false)
     }, 150)
   }, [fromToken, toToken])
-
-  const TOKEN_ADDRESS_MAP: Record<string, string> = {
-    KAS: KASPLEX_TESTNET_ADDRESSES.wkas,
-    WKAS: KASPLEX_TESTNET_ADDRESSES.wkas,
-    USDC: "0xB0c9d7e1e5635a1FBFfC8CFD75CE16BA1ccf2849",
-    USDT: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f",
-    WBTC: "0x42134d776638D67e24cFA0d316f58B5e52cF885f",
-    LINK: "0xa2E3e66262825cA2C6a7352d4F5a1Ba9E82Ff89c",
-    TUSD: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35",
-    NACHO: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB",
-  }
 
   const getTokenAddress = useCallback((ticker: string): string | null => {
     return TOKEN_ADDRESS_MAP[ticker] ?? null

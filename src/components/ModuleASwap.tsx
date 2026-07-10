@@ -117,9 +117,6 @@ export default function ModuleASwap() {
         if (ticker === KASPA_TOKEN.ticker || ticker === "WKAS") {
           return formatKaspa(balanceRaw)
         }
-        if (krc20Balances[ticker] !== undefined) {
-          return String(krc20Balances[ticker])
-        }
         const addr = TOKEN_ADDRESS[ticker]
         if (addr) {
           try {
@@ -128,6 +125,9 @@ export default function ModuleASwap() {
           } catch {
             return "—"
           }
+        }
+        if (krc20Balances[ticker] !== undefined) {
+          return String(krc20Balances[ticker])
         }
         return "—"
       }
