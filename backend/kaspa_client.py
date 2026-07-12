@@ -5,7 +5,7 @@ from typing import Optional
 import httpx
 
 KASPA_RPC_URL = "ws://testnet-12.kaspa.org:17210"
-KASPA_REST_URL = "https://api.kaspa.org"
+KASPA_REST_URL = "https://api-tn12.kaspa.org"
 
 
 class KaspaNodeClient:

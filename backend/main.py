@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -59,7 +59,7 @@ amm_pools = {
 # Concentrated Liquidity Pools
 clmm_pools = {}
 stable_pools = {
-    "stable-1": StableSwapPool([500_000, 500_000, 500_000], amplification=100.0, fee=0.0004),
+    "stable-usdc-tusd": StableSwapPool([500_000, 500_000], amplification=100.0, fee=0.0004),
 }
 weighted_pools = {
     "basket-1": WeightedPool([1_000_000, 500_000, 2_000_000], [0.4, 0.2, 0.4], 0.002),
@@ -67,9 +67,9 @@ weighted_pools = {
 
 # Lending Engine
 lending_engine = LendingEngine()
-# Create default markets
-for token in ["KAS", "USDT", "NACHO", "KASPY", "KASPER"]:
-    ltv = {"USDT": 0.85, "KAS": 0.75, "NACHO": 0.40, "KASPY": 0.35, "KASPER": 0.30}.get(token, 0.5)
+# Create default markets (matching on-chain LendingPool reserves)
+for token in ["WKAS", "USDC", "WBTC", "LINK", "USDT"]:
+    ltv = {"USDC": 0.85, "USDT": 0.85, "WKAS": 0.75, "WBTC": 0.65, "LINK": 0.50}.get(token, 0.5)
     lt = ltv + 0.05
     lending_engine.create_market(token, ltv=ltv, lt=lt, bonus=0.08)
 
@@ -121,6 +121,20 @@ profile_engine = ProfileEngine()
 
 # Perpetual Futures
 perp_engine = PerpEngine()
+
+# ========== L1 DEX Configuration ==========
+
+# DEX wallet address and private key
+DEX_ADDRESS = "kaspatest:qrlc9t0mncjgm6t5hcdrz7fjzz678tkh3dcekagf2s7wkxssx0gu5rkjj564z"
+DEX_PRIVATE_KEY = "7a74ebcd6e36bc2599e45d69b850d1572747967a8143da0902c94faa93fa32f0"
+
+# Off-chain token balance tracking for L1 swaps
+# Structure: {user_address: {token_ticker: balance}}
+token_balances: dict[str, dict[str, float]] = {}
+
+# Fixed swap rate for L1 KAS→USDT (can be overridden by oracle)
+KAS_USDT_RATE = 0.15  # 1 KAS = 0.15 USDT (default, updated by oracle periodically)
+
 
 # ========== FastAPI App ==========
 
@@ -227,6 +241,48 @@ async def get_tx_status(tx_id: str):
     if not status:
         raise HTTPException(status_code=404, detail="Transaction not found")
     return status
+
+
+# ========== L1 DEX ==========
+@app.get("/api/network")
+async def get_network():
+    """Return DEX network configuration."""
+    return {
+        "network": "testnet-12",
+        "dexAddress": DEX_ADDRESS,
+        "kasUsdtRate": KAS_USDT_RATE,
+        "explorer": "https://tn12.kaspa.stream",
+    }
+
+@app.get("/api/token-balances/{address}")
+async def get_token_balances(address: str):
+    """Return off-chain credited token balances for a user address."""
+    balances = token_balances.get(address, {})
+    return {
+        "address": address,
+        "balances": balances,
+    }
+
+@app.post("/api/log-swap")
+async def log_swap(
+    address: str = Body(...),
+    token_out: str = Body("USDT"),
+    amount_out: float = Body(...),
+    tx_id: str = Body(""),
+):
+    """Log a completed L1 swap and credit the user's token balance."""
+    if address not in token_balances:
+        token_balances[address] = {}
+    current = token_balances[address].get(token_out, 0.0)
+    token_balances[address][token_out] = round(current + amount_out, 8)
+    print(f"SWAP: {address} credited {amount_out} {token_out} (tx: {tx_id})")
+    return {
+        "address": address,
+        "token_out": token_out,
+        "amount_out": amount_out,
+        "new_balance": token_balances[address][token_out],
+        "tx_id": tx_id,
+    }
 
 
 # ========== SWAP (LEGACY) ==========
@@ -656,8 +712,8 @@ async def perp_funding():
 
 
 # ========== FRONTEND ==========
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
-for candidate in [frontend_dir / "dist", frontend_dir]:
+project_dir = Path(__file__).resolve().parent.parent
+for candidate in [project_dir / "dist", project_dir / "frontend" / "dist", project_dir / "frontend"]:
     if candidate.exists() and (candidate / "index.html").exists():
         app.mount("/", StaticFiles(directory=str(candidate), html=True), name="frontend")
         break
