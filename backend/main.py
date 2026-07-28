@@ -849,6 +849,17 @@ async def create_bonding_token(
     return token.to_dict()
 
 
+def _auto_graduate(ticker: str):
+    """Automatically create locked liquidity pool when token graduates."""
+    result = bonding_registry.check_graduation(ticker)
+    if result and result["graduated"]:
+        token = bonding_registry.get_token(ticker)
+        if token and not liquidity_registry.get_pool(ticker):
+            liquidity_registry.create_pool(ticker, token.kas_raised, token.supply_sold)
+            print(f"GRADUATION: {ticker} pool created with {token.kas_raised} KAS + {token.supply_sold} tokens locked")
+        bonding_registry._save()
+
+
 @app.post("/api/bonding/buy")
 async def bonding_buy(
     ticker: str = Body(...),
@@ -861,7 +872,7 @@ async def bonding_buy(
     result = token.buy(kas_amount, buyer)
     if "error" in result:
         raise HTTPException(400, result["error"])
-    bonding_registry.check_graduation(ticker.upper())
+    _auto_graduate(ticker.upper())
     bonding_registry._save()
     return result
 
@@ -892,20 +903,15 @@ async def bonding_holders(ticker: str):
 
 @app.post("/api/bonding/graduate/{ticker}")
 async def graduate_token(ticker: str):
-    """Manually trigger graduation for testing."""
-    result = bonding_registry.check_graduation(ticker.upper())
-    if not result:
-        token = bonding_registry.get_token(ticker.upper())
-        if not token:
-            raise HTTPException(404, f"Token {ticker} not found")
-        if token.graduated:
-            raise HTTPException(400, "Already graduated")
-        raise HTTPException(400, f"Not enough KAS raised ({token.kas_raised:.2f}/{GRADUATION_THRESHOLD_KAS})")
-
-    # Create the locked liquidity pool
+    """Manually trigger graduation."""
+    _auto_graduate(ticker.upper())
     token = bonding_registry.get_token(ticker.upper())
-    liquidity_registry.create_pool(ticker.upper(), token.kas_raised, token.supply_sold)
-    return {"graduated": True, "pool": liquidity_registry.get_pool(ticker.upper()).to_dict()}
+    if not token:
+        raise HTTPException(404, f"Token {ticker} not found")
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(400, f"Not enough KAS raised ({token.kas_raised:.2f}/{GRADUATION_THRESHOLD_KAS})")
+    return {"graduated": True, "pool": pool.to_dict()}
 
 
 # ========== GRADUATED AMM POOL (LOCKED LIQUIDITY) ==========
