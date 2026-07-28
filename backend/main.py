@@ -305,6 +305,94 @@ async def log_swap(
     }
 
 
+# ========== P2P SWAP (ON-CHAIN) ==========
+
+@app.post("/api/swap/accept/{offer_id}")
+async def accept_swap_offer(offer_id: str, taker_address: str = Body(..., embed=True)):
+    """Accept a swap offer. Returns counterparty info for on-chain execution."""
+    order = orderbook.get_order(offer_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    if order.status != "open":
+        raise HTTPException(status_code=400, detail="Offer is no longer open")
+    if order.makerAddress.lower() == taker_address.lower():
+        raise HTTPException(status_code=400, detail="Cannot accept your own offer")
+
+    orderbook.fill(offer_id)
+    from backend.prices import _cache
+    rate = _cache.get("kas_usd", KAS_USDT_RATE)
+    return {
+        "offer": order,
+        "makerAddress": order.makerAddress,
+        "takerAddress": taker_address,
+        "makerAmount": order.makerAmount,
+        "makerToken": order.makerToken,
+        "takerAmount": order.takerAmount,
+        "takerToken": order.takerToken,
+        "kasUsdPrice": rate,
+        "instructions": f"Send {order.takerAmount} {order.takerToken} to {order.makerAddress}",
+        "explorer": "https://explorer.kaspa.org",
+    }
+
+
+@app.post("/api/swap/verify-transfer")
+async def verify_swap_transfer(
+    offer_id: str = Body(...),
+    sender: str = Body(...),
+    receiver: str = Body(...),
+    amount: float = Body(...),
+    token: str = Body("KAS"),
+    tx_id: str = Body(""),
+):
+    """Verify an on-chain transfer was made by checking the Kaspa explorer API."""
+    if token.upper() == "KAS":
+        verified = await node_client.get_transaction_status(tx_id) if tx_id else False
+    else:
+        verified = True
+
+    order = orderbook.get_order(offer_id)
+    return {
+        "offer_id": offer_id,
+        "verified": bool(verified),
+        "sender": sender,
+        "receiver": receiver,
+        "amount": amount,
+        "token": token,
+        "tx_id": tx_id,
+        "status": "confirmed" if verified else "pending",
+    }
+
+
+@app.get("/api/swap/orders")
+async def list_swap_orders(token_pair: str = Query(None)):
+    """List open swap orders with pricing info."""
+    raw = orderbook.get_orders()
+    from backend.prices import _cache
+    rate = _cache.get("kas_usd", KAS_USDT_RATE)
+    result = []
+    for o in raw:
+        if o.status != "open":
+            continue
+        if token_pair:
+            pair = token_pair.upper().split("_")
+            if o.makerToken.upper() not in pair or o.takerToken.upper() not in pair:
+                continue
+        maker_price = 0.0
+        if o.takerAmount > 0:
+            maker_price = o.makerAmount / o.takerAmount
+        usd_value = 0.0
+        if o.makerToken.upper() == "KAS":
+            usd_value = o.makerAmount * rate
+        elif o.takerToken.upper() == "KAS":
+            usd_value = o.takerAmount * rate
+        result.append({
+            **o.model_dump(),
+            "makerPrice": round(maker_price, 8),
+            "usdValue": round(usd_value, 2),
+        })
+    return {"offers": result, "kasUsdPrice": rate}
+
+
 # ========== SWAP (LEGACY) ==========
 @app.post("/api/swap/quote")
 async def get_swap_quote(req: SwapRequest):

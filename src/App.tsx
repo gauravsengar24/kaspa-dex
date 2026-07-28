@@ -2,7 +2,7 @@ import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet } from "lucide-react"
 import Header from "./components/Header"
-import SwapInterface from "./components/SwapInterface"
+import P2PSwap from "./components/P2PSwap"
 import Orderbook from "./components/Orderbook"
 import PoolCard from "./components/PoolCard"
 import TransactionHistory from "./components/TransactionHistory"
@@ -53,17 +53,7 @@ export default function App() {
   const renderTab = () => {
     switch (activeTab) {
       case "swap":
-        return (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-            <div className="lg:col-span-3 space-y-4">
-              <SwapInterface />
-            </div>
-            <div className="lg:col-span-2 space-y-4">
-              <Orderbook pair={`${KASPA_TOKEN.ticker}_NACHO`} />
-              <TransactionHistory compact />
-            </div>
-          </div>
-        )
+        return <P2PSwap />
       case "l1-swap":
         return <KaspaL1Swap />
       case "wallet":
