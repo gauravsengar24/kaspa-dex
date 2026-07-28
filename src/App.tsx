@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet, Droplets } from "lucide-react"
 import Header from "./components/Header"
 import P2PSwap from "./components/P2PSwap"
+import DexSwap from "./components/DexSwap"
 import BondingCurve from "./components/BondingCurve"
 import LiquidityPool from "./components/LiquidityPool"
 import Orderbook from "./components/Orderbook"
@@ -57,7 +58,7 @@ export default function App() {
   const renderTab = () => {
     switch (activeTab) {
       case "swap":
-        return <P2PSwap />
+        return <DexSwap />
       case "l1-swap":
         return <P2PSwap />
       case "launch":
