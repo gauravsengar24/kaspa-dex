@@ -206,6 +206,7 @@ export async function getKRC20Balances(): Promise<KasWareKrc20Token[]> {
       dec: t.dec || "8",
       locked: t.locked || "0",
       opScoreMod: t.opScoreMod || "",
+      tokenType: t.opScoreMod ? "KRC20Mint" : "KRC20Issue",
     }))
   } catch { /* noop */ }
   return []
