@@ -18,7 +18,7 @@ import PerpFutures from "./components/PerpFutures"
 import Bridge from "./components/Bridge"
 import ModuleASwap from "./components/ModuleASwap"
 import ModuleAPools from "./components/ModuleAPools"
-import KaspaL1Swap from "./components/KaspaL1Swap"
+
 import WalletPage from "./components/WalletPage"
 import Footer from "./components/Footer"
 import { KASPA_TOKEN } from "./utils/constants"
@@ -55,7 +55,7 @@ export default function App() {
       case "swap":
         return <P2PSwap />
       case "l1-swap":
-        return <KaspaL1Swap />
+        return <P2PSwap />
       case "wallet":
         return <WalletPage />
       case "perps":
