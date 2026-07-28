@@ -8,10 +8,29 @@ import type { TokenInfo } from "../types"
 
 interface PoolToken {
   ticker: string
-  type: "pool" | "bonding"
+  type: "pool" | "bonding" | "amm"
   price: number
   liquidity: number
   icon: string
+  poolId?: string
+}
+
+interface AmmPoolData {
+  [poolId: string]: {
+    type: string
+    token0: string
+    token1: string
+    reserve0: number
+    reserve1: number
+    fee: number
+    price: number
+    k: number
+  }
+}
+
+const AMM_ICONS: Record<string, string> = {
+  USDT: "₮", NACHO: "🌮", KASPER: "💎", PEPEK: "🐸",
+  KISHU: "🐶", GHOST: "👻", KASPY: "🐕",
 }
 
 export default function DexSwap() {
@@ -29,8 +48,8 @@ export default function DexSwap() {
   const [txId, setTxId] = useState<string | null>(null)
 
   const [poolTokens, setPoolTokens] = useState<PoolToken[]>([])
+  const [ammPools, setAmmPools] = useState<AmmPoolData>({})
   const [loadingTokens, setLoadingTokens] = useState(true)
-  const [quoting, setQuoting] = useState(false)
   const [selectingToken, setSelectingToken] = useState<"from" | "to" | null>(null)
 
   const mountedRef = useRef(true)
@@ -39,9 +58,10 @@ export default function DexSwap() {
   const fetchTokens = useCallback(async () => {
     setLoadingTokens(true)
     try {
-      const [poolRes, bondingRes] = await Promise.all([
+      const [poolRes, bondingRes, ammRes] = await Promise.all([
         fetch(`${NETWORK.backend}/api/pool/list`),
         fetch(`${NETWORK.backend}/api/bonding/tokens`),
+        fetch(`${NETWORK.backend}/api/amm/pools`),
       ])
       const all: PoolToken[] = []
       if (poolRes.ok) {
@@ -58,7 +78,30 @@ export default function DexSwap() {
           }
         }
       }
-      if (mountedRef.current) setPoolTokens(all)
+      const ammData: AmmPoolData = {}
+      if (ammRes.ok) {
+        const data = await ammRes.json()
+        for (const [pid, pool] of Object.entries(data) as [string, any][]) {
+          if (pool.type !== "CPMM") continue
+          ammData[pid] = pool
+          for (const tok of [pool.token0, pool.token1]) {
+            if (tok === "KAS") continue
+            if (all.some(a => a.ticker === tok)) continue
+            all.push({
+              ticker: tok,
+              type: "amm",
+              price: pool.token0 === "KAS" ? 1 / pool.price : pool.price,
+              liquidity: pool.token0 === "KAS" ? pool.reserve0 : pool.reserve1,
+              icon: AMM_ICONS[tok] || "🪙",
+              poolId: pid,
+            })
+          }
+        }
+      }
+      if (mountedRef.current) {
+        setPoolTokens(all)
+        setAmmPools(ammData)
+      }
     } catch { /* ignore */ }
     if (mountedRef.current) setLoadingTokens(false)
   }, [])
@@ -67,31 +110,40 @@ export default function DexSwap() {
 
   const routeInfo = useMemo(() => {
     if (!toToken || toToken.ticker === fromToken.ticker) return null
-    if (toToken.ticker === "KAS") return { type: "sell" as const, ticker: fromToken.ticker, price: 0, liquidity: 0 }
+    if (toToken.ticker === "KAS") return { type: "sell" as const, ticker: fromToken.ticker, price: 0, liquidity: 0, poolId: undefined as string | undefined }
     const pt = poolTokens.find(t => t.ticker === toToken.ticker)
     if (!pt) return null
-    return { type: pt.type, ticker: pt.ticker, price: pt.price, liquidity: pt.liquidity }
+    return { type: pt.type as "pool" | "bonding" | "amm", ticker: pt.ticker, price: pt.price, liquidity: pt.liquidity, poolId: pt.poolId }
   }, [toToken, fromToken, poolTokens])
 
   const estimatedOutput = useMemo(() => {
     if (!fromAmount || !routeInfo || Number(fromAmount) <= 0) return null
+    const fee = Number(fromAmount) * SWAP_FEE_PERCENT / 100
+    const effectiveIn = Number(fromAmount) - fee
+    if (routeInfo.type === "amm") {
+      const pid = routeInfo.poolId
+      if (!pid || !ammPools[pid]) return null
+      const pool = ammPools[pid]
+      const isKasIn = pool.token0 === "KAS"
+      const reserveIn = isKasIn ? pool.reserve0 : pool.reserve1
+      const reserveOut = isKasIn ? pool.reserve1 : pool.reserve0
+      const numerator = effectiveIn * reserveOut
+      const denominator = reserveIn + effectiveIn
+      return numerator / denominator
+    }
     if (routeInfo.type === "pool") {
       const price = routeInfo.price
-      const fee = Number(fromAmount) * SWAP_FEE_PERCENT / 100
-      return (Number(fromAmount) - fee) / price
+      return effectiveIn / price
     }
     if (routeInfo.type === "bonding") {
-      return Number(fromAmount) / routeInfo.price
+      return effectiveIn / routeInfo.price
     }
     return null
-  }, [fromAmount, routeInfo])
+  }, [fromAmount, routeInfo, ammPools])
 
   const priceImpact = useMemo(() => {
     if (!fromAmount || !estimatedOutput || !routeInfo) return 0
-    if (routeInfo.type === "pool") {
-      return Math.min(5, (Number(fromAmount) / (Number(fromAmount) + 100)) * 100)
-    }
-    return Math.min(2, (Number(fromAmount) / 1000) * 100)
+    return Math.min(5, (Number(fromAmount) / (Number(fromAmount) + 100)) * 100)
   }, [fromAmount, estimatedOutput, routeInfo])
 
   const minReceived = useMemo(() => {
@@ -121,7 +173,18 @@ export default function DexSwap() {
       }
 
       let result: any
-      if (routeInfo.type === "pool") {
+      if (routeInfo.type === "amm") {
+        const pid = routeInfo.poolId
+        if (!pid) throw new Error("No AMM pool selected")
+        const res = await fetch(`${NETWORK.backend}/api/amm/swap`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pool_id: pid, token_in: "KAS", amount_in: Number(fromAmount) }),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        result = await res.json()
+        setToAmount(result.amount_out.toFixed(6))
+      } else if (routeInfo.type === "pool") {
         const res = await fetch(`${NETWORK.backend}/api/pool/swap/buy`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -150,10 +213,21 @@ export default function DexSwap() {
     }
   }, [connected, connect, fromAmount, routeInfo, address, fetchTokens])
 
-  const outputToken = useMemo(() => {
-    if (!routeInfo) return toToken
-    return { ...KASPA_TOKEN, ticker: routeInfo.ticker, name: routeInfo.ticker, icon: "🪙" } as TokenInfo
-  }, [routeInfo, toToken])
+  const routeLabel = useMemo(() => {
+    if (!routeInfo) return ""
+    if (routeInfo.type === "amm") return "AMM CPMM"
+    if (routeInfo.type === "pool") return "Graduated AMM"
+    if (routeInfo.type === "bonding") return "Bonding Curve"
+    return ""
+  }, [routeInfo])
+
+  const routeColor = useMemo(() => {
+    if (!routeInfo) return ""
+    if (routeInfo.type === "amm") return "text-kaspa-cyan"
+    if (routeInfo.type === "pool") return "text-kaspa-purple"
+    if (routeInfo.type === "bonding") return "text-kaspa-green"
+    return ""
+  }, [routeInfo])
 
   return (
     <div className="max-w-md mx-auto">
@@ -297,13 +371,17 @@ export default function DexSwap() {
               </div>
               <div className="flex justify-between">
                 <span className="text-kaspa-muted">Route</span>
-                <span className={routeInfo.type === "pool" ? "text-kaspa-purple" : "text-kaspa-cyan"}>
-                  {routeInfo.type === "pool" ? "AMM Pool" : "Bonding Curve"}
-                </span>
+                <span className={routeColor}>{routeLabel}</span>
               </div>
+              {routeInfo.type === "amm" && (
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-kaspa-muted">Pool</span>
+                  <span className="text-kaspa-muted font-mono">{routeInfo.poolId}</span>
+                </div>
+              )}
               {routeInfo.type === "pool" && (
                 <div className="flex justify-between text-[10px]">
-                  <span className="text-kaspa-muted">Pool liquidity</span>
+                  <span className="text-kaspa-muted">Liquidity</span>
                   <span className="text-kaspa-muted">{routeInfo.liquidity?.toFixed(2) || "0"} KAS</span>
                 </div>
               )}
@@ -377,7 +455,7 @@ export default function DexSwap() {
                   </div>
                 </button>
                 <div className="border-t border-kaspa-border/30 my-2 pt-2">
-                  <p className="text-xs text-kaspa-muted mb-2">Pool Tokens</p>
+                  <p className="text-xs text-kaspa-muted mb-2">Available Tokens</p>
                   {poolTokens.map(pt => (
                     <button
                       key={pt.ticker}
@@ -396,10 +474,11 @@ export default function DexSwap() {
                       <div className="text-left flex-1">
                         <div className="font-medium">{pt.ticker}</div>
                         <div className="text-xs text-kaspa-muted">
-                          {pt.type === "pool" ? "AMM" : "Bonding"} &middot; {pt.price.toFixed(6)} KAS
+                          {pt.type === "amm" ? "AMM CPMM" : pt.type === "pool" ? "Graduated AMM" : "Bonding Curve"} &middot; {pt.price.toFixed(6)} KAS
                         </div>
                       </div>
                       {pt.type === "pool" && <span className="text-[10px] text-kaspa-green">Graduated</span>}
+                      {pt.type === "amm" && <span className="text-[10px] text-kaspa-cyan">CPMM</span>}
                     </button>
                   ))}
                 </div>
