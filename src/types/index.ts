@@ -168,7 +168,6 @@ export interface UserProfile {
   created_at: number
 }
 
-// EVM L2 contracts (for Kasplex zkEVM — not used on mainnet L1 DEX)
 export interface ContractAddresses {
   factory: string
   router: string
@@ -176,4 +175,79 @@ export interface ContractAddresses {
   wkas: string
   kurveBridge: string
   katBridge: string
+}
+
+export interface SkillDefinition {
+  name: string
+  description: string
+  parameters: Record<string, any>
+}
+
+export interface BridgeTransfer {
+  id: string
+  direction: "deposit" | "withdraw"
+  token: string
+  amount: string
+  kaspaAddress: string
+  txHash?: string
+  status: "pending" | "confirmed" | "failed"
+  timestamp: number
+}
+
+export interface BridgeConfig {
+  kurveBridge: string
+  katBridge: string
+  wkas: string
+  chainId: number
+  rpcUrl: string
+  explorerUrl: string
+  minDeposit: number
+  bridgeAdapter?: string
+}
+
+export interface ModuleAPoolInfo {
+  poolAddress: string
+  tokens: { address: string; ticker: string; weight: number; balance: string }[]
+  swapFee: number
+  totalSupply: string
+  tvl: number
+}
+
+export interface SwapStep {
+  pool: string
+  tokenIn: string
+  tokenOut: string
+}
+
+export const KASPLEX_TESTNET_ADDRESSES: ContractAddresses = {
+  factory: "0x86B1Fcd6f4e2095144fdEd4bAde33aC1Ef9fD132",
+  router: "0x14163052f4AAd3a653b0cF8f0E4182A4F37B8edb",
+  bridgeAdapter: "0x0B8A06fa0007B9e153a6F93982AB467d05bad445",
+  wkas: "0xC065C62a10fB363fD31CA394D632C4Df106566df",
+  kurveBridge: "0x34606E6d01280f49791628B311cF33A808d1f7C6",
+  katBridge: "0x699e7f4a64f6A5a1d7E26B05806d948338E7aDC2",
+}
+
+export const TESTNET_TOKENS: Record<string, { address: string; decimals: number }> = {
+  KAS: { address: KASPLEX_TESTNET_ADDRESSES.wkas, decimals: 18 },
+  USDT: { address: "0xffe75a83620025ADa3742b19163D7E9BE2b2322f", decimals: 18 },
+  NACHO: { address: "0x556fa22558Eaa84E7686E8eAbE7582930BB1b4DB", decimals: 18 },
+  TUSD: { address: "0xE3ADCE18f646BF44c263319ABffB33b83F0B5A35", decimals: 18 },
+}
+
+export const STABLESWAP_POOL_ADDRESS = "0x9574FaE44Edc3A44269f2C5D668bB7f8f0AE6323"
+export const LENDING_POOL_ADDRESS = "0x4C3fd76D5998aEc6F0B964B82EF0B834F7fCd04A"
+
+export const MODULE_A_ADDRESSES = {
+  factory: "0x1eA9faA1B1A533e85f6C41E7B70f4ea4a50836d6",
+  vault: "0x05eba420e02749Ee1A7AECe8f2F3b4Db4d3C013C",
+  wkas: "0xC065C62a10fB363fD31CA394D632C4Df106566df",
+}
+
+export interface BatchQuote {
+  steps: SwapStep[]
+  amountIn: string
+  amountOut: string
+  tokenIn: string
+  tokenOut: string
 }
