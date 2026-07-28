@@ -1,7 +1,10 @@
 import json
+import os
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
+
+import httpx
 
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.models import OrderCreate, SwapRequest, BroadcastRequest, HealthResponse
 from backend.orderbook import orderbook
-from backend.kaspa_client import node_client
+from backend.kaspa_client import node_client, KASPLEX_API_URL
 from backend.prices import get_all_prices, get_token_price
 
 # AMM Engine
@@ -122,26 +125,26 @@ profile_engine = ProfileEngine()
 # Perpetual Futures
 perp_engine = PerpEngine()
 
-# ========== L1 DEX Configuration ==========
+# ========== L1 DEX Configuration (Mainnet) ==========
 
-# DEX wallet address and private key
-DEX_ADDRESS = "kaspatest:qrlc9t0mncjgm6t5hcdrz7fjzz678tkh3dcekagf2s7wkxssx0gu5rkjj564z"
-DEX_PRIVATE_KEY = "7a74ebcd6e36bc2599e45d69b850d1572747967a8143da0902c94faa93fa32f0"
+# DEX wallet address — users send KAS here to initiate swaps
+DEX_ADDRESS = os.environ.get("DEX_ADDRESS", "kaspa:qrlc9t0mncjgm6t5hcdrz7fjzz678tkh3dcekagf2s7wkxssx0gu5rkjj564z")
 
 # Off-chain token balance tracking for L1 swaps
-# Structure: {user_address: {token_ticker: balance}}
 token_balances: dict[str, dict[str, float]] = {}
 
-# Fixed swap rate for L1 KAS→USDT (can be overridden by oracle)
-KAS_USDT_RATE = 0.15  # 1 KAS = 0.15 USDT (default, updated by oracle periodically)
+# KAS price (updated by CoinGecko oracle periodically)
+KAS_USDT_RATE = 0.15  # updated by prices.py
 
 
 # ========== FastAPI App ==========
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await orderbook.initialize()
     health = await node_client.check_health()
-    print(f"Kaspa node connected: {health}")
+    print(f"Kaspa mainnet node connected: {health}")
+    print(f"Active orders: {orderbook.count()}")
     yield
 
 
@@ -165,7 +168,7 @@ async def health():
     node_ok = await node_client.check_health()
     return HealthResponse(
         status="ok",
-        network="kaspa-testnet-12",
+        network="kaspa-mainnet",
         nodeConnected=node_ok,
         orderCount=orderbook.count(),
     )
@@ -246,21 +249,38 @@ async def get_tx_status(tx_id: str):
 # ========== L1 DEX ==========
 @app.get("/api/network")
 async def get_network():
-    """Return DEX network configuration."""
+    """Return DEX network configuration for mainnet."""
+    from backend.prices import _cache
+    rate = _cache.get("kas_usd", KAS_USDT_RATE)
     return {
-        "network": "testnet-12",
+        "network": "kaspa-mainnet",
         "dexAddress": DEX_ADDRESS,
-        "kasUsdtRate": KAS_USDT_RATE,
-        "explorer": "https://tn12.kaspa.stream",
+        "kasUsdtRate": rate,
+        "explorer": "https://explorer.kaspa.org",
     }
 
 @app.get("/api/token-balances/{address}")
 async def get_token_balances(address: str):
     """Return off-chain credited token balances for a user address."""
-    balances = token_balances.get(address, {})
+    onchain = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{KASPLEX_API_URL}/krc20/address/{address}/tokenlist")
+            if resp.status_code == 200:
+                data = resp.json()
+                for token in data.get("result", []):
+                    ticker = token.get("tick", "").upper()
+                    bal = float(token.get("balance", "0")) / (10 ** int(token.get("dec", 8)))
+                    if bal > 0:
+                        onchain[ticker] = bal
+    except Exception:
+        pass
+    credited = token_balances.get(address, {})
+    merged = {**credited, **onchain}
     return {
         "address": address,
-        "balances": balances,
+        "balances": merged,
+        "source": "kasplex-mainnet",
     }
 
 @app.post("/api/log-swap")

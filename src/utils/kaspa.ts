@@ -1,6 +1,7 @@
 import type { WalletState } from "../types"
 
 const SOMPI_PER_KAS = 100_000_000
+const KASPA_REST = "https://api.kaspa.org"
 const STORAGE_KEY = "kaspadex_wallet"
 
 let _kaswareVersion: string | undefined
@@ -159,10 +160,18 @@ export async function refreshWalletBalance(address: string): Promise<number> {
   try {
     const p = await ensureProvider()
     const balanceData = await p.getBalance()
-    return balanceData?.total ? Number(balanceData.total) / SOMPI_PER_KAS : 0
+    if (balanceData?.total) return Number(balanceData.total) / SOMPI_PER_KAS
   } catch {
-    return 0
+    /* fallback to public API */
   }
+  try {
+    const res = await fetch(`${KASPA_REST}/addresses/${address}/balance`)
+    if (res.ok) {
+      const data = await res.json()
+      return (data.balance || 0) / SOMPI_PER_KAS
+    }
+  } catch { /* noop */ }
+  return 0
 }
 
 export async function disconnectWallet(): Promise<void> {
@@ -177,10 +186,26 @@ export async function getKRC20Balances(): Promise<KasWareKrc20Token[]> {
   try {
     const p = await ensureProvider()
     const balances = await p.getKRC20Balance()
-    return balances || []
+    if (balances?.length) return balances
   } catch {
-    return []
+    /* fallback to Kasplex API */
   }
+  try {
+    const addr = loadSession()?.address
+    if (!addr) return []
+    const res = await fetch(`https://api.kasplex.org/v1/krc20/address/${addr}/tokenlist`)
+    if (res.ok) {
+      const data = await res.json()
+      return (data.result || []).map((t: any) => ({
+        tick: t.tick,
+        balance: t.balance,
+        dec: t.dec || "8",
+        locked: "0",
+        opScoreMod: "",
+      }))
+    }
+  } catch { /* noop */ }
+  return []
 }
 
 export function isKasWareInstalled(): boolean {

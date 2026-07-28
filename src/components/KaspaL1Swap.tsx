@@ -171,7 +171,7 @@ export default function KaspaL1Swap() {
             </p>
             <p className="text-xs text-kaspa-muted font-mono truncate">
               TX: <a
-                href={`${networkInfo?.explorer || "https://tn12.kaspa.stream"}/transactions/${txResult.txId}`}
+                href={`${networkInfo?.explorer || "https://explorer.kaspa.org"}/transactions/${txResult.txId}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline text-kaspa-pink"
