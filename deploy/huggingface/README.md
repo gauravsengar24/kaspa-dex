@@ -54,3 +54,4 @@ User Browser ──► HuggingFace Space (port 7860)
 
 The backend connects to Kaspa Testnet-12 by default.
 For production, set `KASPA_NODE_URL` to your own node.
+# Built at Tue Jul 28 15:58:13 IST 2026
