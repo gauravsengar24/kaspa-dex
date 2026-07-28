@@ -420,7 +420,7 @@ async def amm_quote(token_in: str = "KAS", token_out: str = "NACHO",
     raise HTTPException(status_code=404, detail="Pool not found")
 
 @app.post("/api/amm/swap")
-async def amm_swap(pool_id: str, token_in: str, amount_in: float):
+async def amm_swap(pool_id: str = Body(...), token_in: str = Body(...), amount_in: float = Body(...)):
     if pool_id in amm_pools:
         pool = amm_pools[pool_id]
         t0, t1 = pool_id.split("-")
