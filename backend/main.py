@@ -129,14 +129,6 @@ profile_engine = ProfileEngine()
 # Perpetual Futures
 perp_engine = PerpEngine()
 
-# ========== L1 DEX Configuration (Mainnet) ==========
-
-# DEX wallet address — users send KAS here to initiate swaps
-DEX_ADDRESS = os.environ.get("DEX_ADDRESS", "kaspa:qrlc9t0mncjgm6t5hcdrz7fjzz678tkh3dcekagf2s7wkxssx0gu5rkjj564z")
-
-# Off-chain token balance tracking for L1 swaps
-token_balances: dict[str, dict[str, float]] = {}
-
 # KAS price (updated by CoinGecko oracle periodically)
 KAS_USDT_RATE = 0.15  # updated by prices.py
 
@@ -250,66 +242,7 @@ async def get_tx_status(tx_id: str):
     return status
 
 
-# ========== L1 DEX ==========
-@app.get("/api/network")
-async def get_network():
-    """Return DEX network configuration for mainnet."""
-    from backend.prices import _cache
-    rate = _cache.get("kas_usd", KAS_USDT_RATE)
-    return {
-        "network": "kaspa-mainnet",
-        "dexAddress": DEX_ADDRESS,
-        "kasUsdtRate": rate,
-        "explorer": "https://explorer.kaspa.org",
-    }
-
-@app.get("/api/token-balances/{address}")
-async def get_token_balances(address: str):
-    """Return off-chain credited token balances for a user address."""
-    onchain = {}
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{KASPLEX_API_URL}/krc20/address/{address}/tokenlist")
-            if resp.status_code == 200:
-                data = resp.json()
-                for token in data.get("result", []):
-                    ticker = token.get("tick", "").upper()
-                    bal = float(token.get("balance", "0")) / (10 ** int(token.get("dec", 8)))
-                    if bal > 0:
-                        onchain[ticker] = bal
-    except Exception:
-        pass
-    credited = token_balances.get(address, {})
-    merged = {**credited, **onchain}
-    return {
-        "address": address,
-        "balances": merged,
-        "source": "kasplex-mainnet",
-    }
-
-@app.post("/api/log-swap")
-async def log_swap(
-    address: str = Body(...),
-    token_out: str = Body("USDT"),
-    amount_out: float = Body(...),
-    tx_id: str = Body(""),
-):
-    """Log a completed L1 swap and credit the user's token balance."""
-    if address not in token_balances:
-        token_balances[address] = {}
-    current = token_balances[address].get(token_out, 0.0)
-    token_balances[address][token_out] = round(current + amount_out, 8)
-    print(f"SWAP: {address} credited {amount_out} {token_out} (tx: {tx_id})")
-    return {
-        "address": address,
-        "token_out": token_out,
-        "amount_out": amount_out,
-        "new_balance": token_balances[address][token_out],
-        "tx_id": tx_id,
-    }
-
-
-# ========== P2P SWAP (ON-CHAIN) ==========
+# ========== P2P SWAP (PSKT Atomic) ==========
 
 @app.post("/api/swap/accept/{offer_id}")
 async def accept_swap_offer(offer_id: str, taker_address: str = Body(..., embed=True)):
@@ -334,37 +267,41 @@ async def accept_swap_offer(offer_id: str, taker_address: str = Body(..., embed=
         "takerAmount": order.takerAmount,
         "takerToken": order.takerToken,
         "kasUsdPrice": rate,
-        "instructions": f"Send {order.takerAmount} {order.takerToken} to {order.makerAddress}",
+        "pskt_template": {
+            "maker_pay_addr": order.makerAddress,
+            "maker_pay_amount": order.takerAmount,
+            "maker_pay_token": order.takerToken,
+            "taker_pay_addr": taker_address,
+            "taker_pay_amount": order.makerAmount,
+            "taker_pay_token": order.makerToken,
+        },
         "explorer": "https://explorer.kaspa.org",
     }
 
 
-@app.post("/api/swap/verify-transfer")
-async def verify_swap_transfer(
+@app.post("/api/swap/submit-pskt")
+async def submit_pskt(
     offer_id: str = Body(...),
-    sender: str = Body(...),
-    receiver: str = Body(...),
-    amount: float = Body(...),
-    token: str = Body("KAS"),
-    tx_id: str = Body(""),
+    pskt_hex: str = Body(...),
+    submitter: str = Body(...),
 ):
-    """Verify an on-chain transfer was made by checking the Kaspa explorer API."""
-    if token.upper() == "KAS":
-        verified = await node_client.get_transaction_status(tx_id) if tx_id else False
-    else:
-        verified = True
+    """Submit a fully-signed PSKT for broadcast. Returns the tx_id."""
+    try:
+        tx_id = await node_client.broadcast_transaction(pskt_hex)
+        if not tx_id:
+            raise HTTPException(status_code=502, detail="Node rejected PSKT broadcast")
+        return {"offer_id": offer_id, "tx_id": tx_id, "status": "submitted"}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Broadcast failed: {e}")
 
-    order = orderbook.get_order(offer_id)
-    return {
-        "offer_id": offer_id,
-        "verified": bool(verified),
-        "sender": sender,
-        "receiver": receiver,
-        "amount": amount,
-        "token": token,
-        "tx_id": tx_id,
-        "status": "confirmed" if verified else "pending",
-    }
+
+@app.get("/api/swap/tx-status/{tx_id}")
+async def swap_tx_status(tx_id: str):
+    """Check on-chain status of a swap transaction."""
+    status = await node_client.get_transaction_status(tx_id)
+    if not status:
+        return {"tx_id": tx_id, "status": "pending"}
+    return {"tx_id": tx_id, "status": status}
 
 
 @app.get("/api/swap/orders")

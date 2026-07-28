@@ -5,8 +5,6 @@ import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { formatKaspa, formatAddress } from "../utils/kaspa"
 import { NETWORK, TOKENS, KASPA_TOKEN } from "../utils/constants"
 
-const SOMPI_PER_KAS = 100_000_000
-
 interface PoolInfo {
   ticker: string
   kasReserve: number
@@ -84,17 +82,11 @@ export default function LiquidityPool() {
   const handleSwap = useCallback(async () => {
     if (!connected) { await connect(); return }
     if (!swapAmount || !selected || Number(swapAmount) <= 0) return
-    if (!window.kasware) { showError("KasWare not detected"); return }
 
     setSwapping(true)
     setError(null)
     setTxId(null)
     try {
-      const sompi = Math.floor(Number(swapAmount) * SOMPI_PER_KAS)
-      const sendTo = "kaspa:qzhc7qlqpl62vg9jq6mla8g6377mk7ufxgjndnj5c2ef2qvvw3qwm0nar5wq"
-      const txHash = await window.kasware.sendKaspa(sendTo, sompi)
-      setTxId(txHash)
-
       const endpoint = swapMode === "buy" ? "swap/buy" : "swap/sell"
       const payload = swapMode === "buy"
         ? { ticker: selected.ticker, kas_amount: Number(swapAmount), user: address }
@@ -126,18 +118,10 @@ export default function LiquidityPool() {
   const handleAddLiquidity = useCallback(async () => {
     if (!connected) { await connect(); return }
     if (!lpKasAmount || !lpTokenAmount || !selected) return
-    if (!window.kasware) { showError("KasWare not detected"); return }
 
     setSwapping(true)
     setError(null)
     try {
-      const sompi = Math.floor(Number(lpKasAmount) * SOMPI_PER_KAS)
-      const txHash = await window.kasware.sendKaspa(
-        "kaspa:qzhc7qlqpl62vg9jq6mla8g6377mk7ufxgjndnj5c2ef2qvvw3qwm0nar5wq",
-        sompi
-      )
-      setTxId(txHash)
-
       const res = await fetch(`${NETWORK.backend}/api/pool/add-liquidity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

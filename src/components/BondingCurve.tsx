@@ -5,8 +5,6 @@ import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { formatKaspa, formatAddress } from "../utils/kaspa"
 import { NETWORK, TOKENS, KASPA_TOKEN } from "../utils/constants"
 
-const SOMPI_PER_KAS = 100_000_000
-
 interface BondingTokenInfo {
   ticker: string
   name: string
@@ -91,19 +89,11 @@ export default function BondingCurve() {
   const handleBuy = useCallback(async () => {
     if (!connected) { await connect(); return }
     if (!kasAmount || !selected || Number(kasAmount) <= 0) return
-    if (!window.kasware) { showError("KasWare not detected"); return }
 
     setSwapping(true)
     setError(null)
     setTxId(null)
     try {
-      const sompi = Math.floor(Number(kasAmount) * SOMPI_PER_KAS)
-      const txHash = await window.kasware.sendKaspa(
-        "kaspa:qzhc7qlqpl62vg9jq6mla8g6377mk7ufxgjndnj5c2ef2qvvw3qwm0nar5wq",
-        sompi
-      )
-      setTxId(txHash)
-
       const res = await fetch(`${NETWORK.backend}/api/bonding/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

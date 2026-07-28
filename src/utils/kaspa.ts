@@ -1,4 +1,5 @@
 import type { WalletState } from "../types"
+import { getKrc20Balances as getKrc20BalancesFromModule } from "./krc20"
 
 const SOMPI_PER_KAS = 100_000_000
 const KASPA_REST = "https://api.kaspa.org"
@@ -162,8 +163,13 @@ export async function refreshWalletBalance(address: string): Promise<number> {
     const balanceData = await p.getBalance()
     if (balanceData?.total) return Number(balanceData.total) / SOMPI_PER_KAS
   } catch {
-    /* fallback to public API */
+    /* fallback to RPC */
   }
+  try {
+    const { getBalanceByRpc } = await import("./rpcClient")
+    const bal = await getBalanceByRpc(address)
+    if (bal > 0) return bal
+  } catch { }
   try {
     const res = await fetch(`${KASPA_REST}/addresses/${address}/balance`)
     if (res.ok) {
@@ -193,17 +199,14 @@ export async function getKRC20Balances(): Promise<KasWareKrc20Token[]> {
   try {
     const addr = loadSession()?.address
     if (!addr) return []
-    const res = await fetch(`https://api.kasplex.org/v1/krc20/address/${addr}/tokenlist`)
-    if (res.ok) {
-      const data = await res.json()
-      return (data.result || []).map((t: any) => ({
-        tick: t.tick,
-        balance: t.balance,
-        dec: t.dec || "8",
-        locked: "0",
-        opScoreMod: "",
-      }))
-    }
+    const result = await getKrc20BalancesFromModule(addr)
+    return result.map((t: any) => ({
+      tick: t.tick,
+      balance: t.balance,
+      dec: t.dec || "8",
+      locked: t.locked || "0",
+      opScoreMod: t.opScoreMod || "",
+    }))
   } catch { /* noop */ }
   return []
 }

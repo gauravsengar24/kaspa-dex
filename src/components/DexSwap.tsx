@@ -6,8 +6,6 @@ import { formatKaspa } from "../utils/kaspa"
 import { NETWORK, TOKENS, KASPA_TOKEN, SLIPPAGE_OPTIONS, DEFAULT_SLIPPAGE, SWAP_FEE_PERCENT } from "../utils/constants"
 import type { TokenInfo } from "../types"
 
-const SOMPI_PER_KAS = 100_000_000
-
 interface PoolToken {
   ticker: string
   type: "pool" | "bonding"
@@ -115,15 +113,14 @@ export default function DexSwap() {
     setTxId(null)
 
     try {
-      const sompi = Math.floor(Number(fromAmount) * SOMPI_PER_KAS)
-      const txHash = await window.kasware.sendKaspa(address, sompi)
-      setTxId(txHash)
-
       if (routeInfo.ticker === "KAS") {
         setSwapping(false)
+        setFromAmount("")
+        fetchTokens()
         return
       }
 
+      let result: any
       if (routeInfo.type === "pool") {
         const res = await fetch(`${NETWORK.backend}/api/pool/swap/buy`, {
           method: "POST",
@@ -131,8 +128,8 @@ export default function DexSwap() {
           body: JSON.stringify({ ticker: routeInfo.ticker, kas_amount: Number(fromAmount), user: address }),
         })
         if (!res.ok) throw new Error(await res.text())
-        const data = await res.json()
-        setToAmount(data.tokens_out.toFixed(6))
+        result = await res.json()
+        setToAmount(result.tokens_out.toFixed(6))
       } else if (routeInfo.type === "bonding") {
         const res = await fetch(`${NETWORK.backend}/api/bonding/buy`, {
           method: "POST",
@@ -140,8 +137,8 @@ export default function DexSwap() {
           body: JSON.stringify({ ticker: routeInfo.ticker, kas_amount: Number(fromAmount), buyer: address }),
         })
         if (!res.ok) throw new Error(await res.text())
-        const data = await res.json()
-        setToAmount(data.tokens_bought.toFixed(6))
+        result = await res.json()
+        setToAmount(result.tokens_bought.toFixed(6))
       }
 
       setFromAmount("")

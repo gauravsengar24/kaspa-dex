@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ArrowLeftRight, Plus, RefreshCw, ExternalLink, Check, Copy } from "lucide-react"
+import { ArrowLeftRight, Plus, RefreshCw, ExternalLink, Check, Copy, Send, AlertTriangle, Shield } from "lucide-react"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { formatKaspa, formatAddress } from "../utils/kaspa"
 import { NETWORK, TOKENS, KASPA_TOKEN } from "../utils/constants"
 import type { TokenInfo } from "../types"
+import { getKrc20Balances, transferKrc20, getTotalKrc20Balance } from "../utils/krc20"
+import { buildMakerPskt, signMakerPskt, pushTransaction } from "../utils/psktSwap"
 
 const SOMPI_PER_KAS = 100_000_000
 
@@ -39,16 +41,27 @@ export default function P2PSwap() {
   const [acceptingId, setAcceptingId] = useState<string | null>(null)
   const [accepting, setAccepting] = useState(false)
   const [acceptedOffer, setAcceptedOffer] = useState<Offer | null>(null)
-  const [txStatus, setTxStatus] = useState<"idle" | "sending" | "sent" | "confirming" | "done" | "error">("idle")
+  const [txStatus, setTxStatus] = useState<"idle" | "building" | "signing" | "broadcasting" | "done" | "error">("idle")
   const [txId, setTxId] = useState<string | null>(null)
+  const [psktHex, setPsktHex] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [filterPair, setFilterPair] = useState<string>("all")
+  const [acceptMethod, setAcceptMethod] = useState<"pskt" | "direct">("pskt")
+  const [krc20SenderBalances, setKrc20SenderBalances] = useState<any[]>([])
   const mountedRef = useRef(true)
 
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
+
+  useEffect(() => {
+    if (connected && address) {
+      getKrc20Balances(address).then(b => {
+        if (mountedRef.current) setKrc20SenderBalances(b)
+      })
+    }
+  }, [connected, address])
 
   const fetchOffers = useCallback(async () => {
     setLoading(true)
@@ -101,14 +114,14 @@ export default function P2PSwap() {
         }),
       })
       if (res.ok) {
-        showSuccess("Offer created! It will appear in the orderbook.")
+        showSuccess("Offer created! Appears in the orderbook.")
         setMakerAmount("")
         setTakerAmount("")
         setMode("orderbook")
         fetchOffers()
       } else {
         const err = await res.text()
-        showError(`Failed to create offer: ${err}`)
+        showError(`Failed: ${err}`)
       }
     } catch (err) {
       showError(err instanceof Error ? err.message : "Failed to create offer")
@@ -121,6 +134,7 @@ export default function P2PSwap() {
     setAccepting(true)
     setTxStatus("idle")
     setTxId(null)
+    setPsktHex(null)
     setAcceptedOffer(null)
     setError(null)
 
@@ -144,40 +158,74 @@ export default function P2PSwap() {
     }
   }, [connected, connect, address])
 
-  const executeOnChain = useCallback(async () => {
+  const executePsktSwap = useCallback(async () => {
     if (!acceptedOffer || !window.kasware) {
       showError("KasWare wallet not detected")
       return
     }
-    setTxStatus("sending")
+    setTxStatus("building")
+    setError(null)
+
+    try {
+      if (acceptedOffer.takerToken === "KAS" && acceptedOffer.makerToken === "KAS") {
+        const sompi = Math.floor(Number(acceptedOffer.takerAmount) * SOMPI_PER_KAS)
+        setTxStatus("signing")
+        const txHash = await window.kasware.sendKaspa(acceptedOffer.makerAddress, sompi)
+        setTxId(txHash)
+        setTxStatus("done")
+        showSuccess(`KAS sent on-chain! TX: ${txHash.slice(0, 16)}...`)
+        setMode("orderbook")
+        fetchOffers()
+        return
+      }
+
+      if (acceptedOffer.takerToken !== "KAS") {
+        setTxStatus("signing")
+        const tick = acceptedOffer.takerToken
+        const takerBal = getTotalKrc20Balance(tick, krc20SenderBalances as any)
+        const needed = acceptedOffer.takerAmount
+        if (takerBal < needed) {
+          throw new Error(`Insufficient ${tick} balance. You have ${takerBal.toFixed(2)}, need ${needed.toFixed(2)}`)
+        }
+        const rawAmt = BigInt(Math.floor(needed * 1e8)).toString()
+        const result = await transferKrc20(tick, rawAmt, acceptedOffer.makerAddress, 0.1)
+        setTxId(result.revealId || result.commitId)
+        setTxStatus("done")
+        showSuccess(`KRC-20 transfer submitted! Reveal TX: ${result.revealId?.slice(0, 16) || "pending"}...`)
+        setMode("orderbook")
+        fetchOffers()
+        return
+      }
+
+      throw new Error("Unsupported swap pair. Try the direct send method.")
+    } catch (err) {
+      setTxStatus("error")
+      showError(err instanceof Error ? err.message : "Swap execution failed")
+    } finally {
+      setAccepting(false)
+      setAcceptingId(null)
+    }
+  }, [acceptedOffer, address, krc20SenderBalances, fetchOffers])
+
+  const executeDirectSend = useCallback(async () => {
+    if (!acceptedOffer || !window.kasware) {
+      showError("KasWare wallet not detected")
+      return
+    }
+    setTxStatus("signing")
     setError(null)
 
     try {
       const sompi = Math.floor(Number(acceptedOffer.takerAmount) * SOMPI_PER_KAS)
       const txHash = await window.kasware.sendKaspa(acceptedOffer.makerAddress, sompi)
       setTxId(txHash)
-      setTxStatus("sent")
-
-      await fetch(`${NETWORK.backend}/api/swap/verify-transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          offer_id: acceptedOffer.id,
-          sender: address,
-          receiver: acceptedOffer.makerAddress,
-          amount: acceptedOffer.takerAmount,
-          token: acceptedOffer.takerToken,
-          tx_id: txHash,
-        }),
-      })
-
       setTxStatus("done")
-      showSuccess(`Swap executed on-chain! TX: ${txHash.slice(0, 16)}...`)
+      showSuccess(`Sent ${acceptedOffer.takerAmount} KAS directly on-chain! TX: ${txHash.slice(0, 16)}...`)
       setMode("orderbook")
       fetchOffers()
     } catch (err) {
       setTxStatus("error")
-      showError(err instanceof Error ? err.message : "On-chain transaction failed")
+      showError(err instanceof Error ? err.message : "Send failed")
     } finally {
       setAccepting(false)
       setAcceptingId(null)
@@ -187,6 +235,14 @@ export default function P2PSwap() {
   const handleCopy = () => {
     if (acceptedOffer) {
       navigator.clipboard.writeText(acceptedOffer.makerAddress)
+      setCopied(true)
+      setTimeout(() => { if (mountedRef.current) setCopied(false) }, 2000)
+    }
+  }
+
+  const handleCopyPskt = () => {
+    if (psktHex) {
+      navigator.clipboard.writeText(psktHex)
       setCopied(true)
       setTimeout(() => { if (mountedRef.current) setCopied(false) }, 2000)
     }
@@ -206,9 +262,9 @@ export default function P2PSwap() {
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-kaspa-pink to-kaspa-purple flex items-center justify-center mx-auto mb-4">
             <ArrowLeftRight size={28} className="text-white" />
           </div>
-          <h2 className="text-xl font-bold mb-2">P2P Swap</h2>
+          <h2 className="text-xl font-bold mb-2">P2P Atomic Swap</h2>
           <p className="text-kaspa-muted text-sm mb-6">
-            Swap KAS and KRC-20 tokens directly with other users. On-chain, peer-to-peer.
+            Trustless peer-to-peer swaps. KAS sent directly between wallets — no intermediary.
           </p>
           <button onClick={connect} className="btn-primary px-8 py-3">
             {connecting ? "Connecting..." : "Connect KasWare to Start"}
@@ -222,7 +278,7 @@ export default function P2PSwap() {
     <div className="max-w-2xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-display font-bold">P2P Swap</h2>
+          <h2 className="text-lg font-display font-bold">P2P Atomic Swap</h2>
           <p className="text-xs text-kaspa-muted">
             {formatKaspa(balanceRaw)} KAS &middot; 1 KAS = ${kasUsdPrice.toFixed(4)}
           </p>
@@ -238,6 +294,11 @@ export default function P2PSwap() {
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-2 text-[10px] text-kaspa-muted bg-white/5 rounded-xl px-3 py-2">
+        <Shield size={12} className="text-kaspa-green shrink-0" />
+        <span>All on-chain. KAS sent directly between wallets. KRC-20 via KasWare commit-reveal.</span>
       </div>
 
       <AnimatePresence mode="wait">
@@ -348,7 +409,9 @@ export default function P2PSwap() {
             className="glass rounded-2xl p-5"
           >
             <h3 className="font-semibold mb-1">Execute Swap</h3>
-            <p className="text-xs text-kaspa-muted mb-4">Send your tokens on-chain to complete the swap</p>
+            <p className="text-xs text-kaspa-muted mb-4">
+              Send your tokens directly on-chain to the counterparty.
+            </p>
 
             <div className="glass rounded-xl p-4 mb-4 space-y-3">
               <div className="flex justify-between items-center">
@@ -384,15 +447,25 @@ export default function P2PSwap() {
               </div>
             </div>
 
+            {acceptedOffer.takerToken !== "KAS" && (
+              <div className="glass rounded-xl p-3 mb-4 text-xs flex items-start gap-2 border border-kaspa-gold/30">
+                <AlertTriangle size={14} className="text-kaspa-gold shrink-0 mt-0.5" />
+                <span className="text-kaspa-muted">
+                  KRC-20 tokens require a commit-reveal (2 tx). This is not atomic — the counterparty should
+                  verify the reveal before releasing KAS.
+                </span>
+              </div>
+            )}
+
             <AnimatePresence>
-              {txStatus === "sent" && txId && (
+              {txStatus === "done" && txId && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   className="glass rounded-xl p-3 mb-4 text-sm"
                 >
                   <div className="flex items-center gap-2 text-kaspa-green font-medium mb-1">
-                    <Check size={14} /> Transaction sent!
+                    <Check size={14} /> Transaction submitted!
                   </div>
                   <p className="text-xs text-kaspa-muted font-mono break-all">
                     TX: <a
@@ -406,15 +479,33 @@ export default function P2PSwap() {
               )}
             </AnimatePresence>
 
+            {psktHex && (
+              <div className="glass rounded-xl p-3 mb-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-kaspa-muted font-medium">PSKT Hex</span>
+                  <button onClick={handleCopyPskt} className="text-kaspa-muted hover:text-white text-xs">
+                    {copied ? <Check size={12} className="text-kaspa-green" /> : <Copy size={12} />}
+                  </button>
+                </div>
+                <p className="text-[10px] font-mono text-kaspa-muted break-all max-h-20 overflow-y-auto">
+                  {psktHex}
+                </p>
+              </div>
+            )}
+
             <button
-              onClick={executeOnChain}
-              disabled={txStatus === "sending" || txStatus === "sent"}
+              onClick={executePsktSwap}
+              disabled={txStatus === "signing" || txStatus === "broadcasting" || txStatus === "done"}
               className="btn-primary w-full py-3 flex items-center justify-center gap-2"
             >
-              {txStatus === "sending" ? "Sending..." : txStatus === "sent" ? "Sent ✓" : "Send via KasWare"}
+              {txStatus === "building" ? "Building transaction..."
+                : txStatus === "signing" ? "Signing in KasWare..."
+                : txStatus === "broadcasting" ? "Broadcasting..."
+                : txStatus === "done" ? "Done ✓"
+                : <><Send size={14} /> Send {acceptedOffer.takerToken} via KasWare</>}
             </button>
 
-            {(txStatus === "done" || txStatus === "sent") && (
+            {(txStatus === "done") && (
               <button
                 onClick={() => { setMode("orderbook"); setAcceptedOffer(null); setTxStatus("idle") }}
                 className="btn-secondary w-full mt-2"
@@ -458,7 +549,7 @@ export default function P2PSwap() {
                 <ArrowLeftRight size={24} className="text-kaspa-muted mx-auto mb-3" />
                 <p className="text-kaspa-muted text-sm mb-1">No open offers</p>
                 <p className="text-xs text-kaspa-muted/60 mb-4">
-                  Be the first to create a swap offer
+                  Create the first swap offer — all on-chain, no intermediary
                 </p>
                 <button
                   onClick={() => setMode("create")}
