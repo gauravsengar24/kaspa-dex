@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet } from "lucide-react"
+import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet, Droplets } from "lucide-react"
 import Header from "./components/Header"
 import P2PSwap from "./components/P2PSwap"
+import BondingCurve from "./components/BondingCurve"
+import LiquidityPool from "./components/LiquidityPool"
 import Orderbook from "./components/Orderbook"
 import PoolCard from "./components/PoolCard"
 import TransactionHistory from "./components/TransactionHistory"
@@ -24,7 +26,7 @@ import Footer from "./components/Footer"
 import { KASPA_TOKEN } from "./utils/constants"
 import { usePools } from "./hooks/usePools"
 
-export type TabId = "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge" | "module-a" | "module-a-pools" | "l1-swap" | "wallet"
+export type TabId = "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge" | "module-a" | "module-a-pools" | "l1-swap" | "wallet" | "launch" | "pool"
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("swap")
@@ -33,6 +35,8 @@ export default function App() {
   const tabs: { id: TabId; label: string; icon: any }[] = [
     { id: "swap", label: "Swap", icon: ArrowLeftRight },
     { id: "l1-swap", label: "L1 DEX", icon: ArrowRightLeft },
+    { id: "launch", label: "Launch", icon: Rocket },
+    { id: "pool", label: "Pool", icon: Droplets },
     { id: "wallet", label: "Wallet", icon: Wallet },
     { id: "module-a", label: "Mod A", icon: Layers },
     { id: "perps", label: "Perps", icon: Zap },
@@ -56,6 +60,10 @@ export default function App() {
         return <P2PSwap />
       case "l1-swap":
         return <P2PSwap />
+      case "launch":
+        return <BondingCurve />
+      case "pool":
+        return <LiquidityPool />
       case "wallet":
         return <WalletPage />
       case "perps":

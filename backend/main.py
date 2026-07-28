@@ -45,6 +45,10 @@ from backend.profile import ProfileEngine
 # Perpetual Futures
 from backend.perp import PerpEngine, OrderSide
 
+# Bonding Curve + Graduated AMM
+from backend.bonding import bonding_registry, GRADUATION_THRESHOLD_KAS, TOTAL_SUPPLY
+from backend.liquidity import liquidity_registry
+
 # ========== Global Instances ==========
 
 # AMM Pools
@@ -817,6 +821,190 @@ async def perp_account(user: str, current_price: float = 0.0295):
 @app.get("/api/perp/funding-rate")
 async def perp_funding():
     return {"funding_rate": perp_engine.get_funding_rate()}
+
+
+# ========== BONDING CURVE (KRON-STYLE) ==========
+
+@app.get("/api/bonding/tokens")
+async def list_bonding_tokens(graduated: bool = Query(None)):
+    return bonding_registry.list_tokens(graduated=graduated)
+
+
+@app.get("/api/bonding/token/{ticker}")
+async def get_bonding_token(ticker: str):
+    token = bonding_registry.get_token(ticker.upper())
+    if not token:
+        raise HTTPException(404, f"Token {ticker} not found")
+    return token.to_dict()
+
+
+@app.post("/api/bonding/create")
+async def create_bonding_token(
+    ticker: str = Body(...),
+    name: str = Body(...),
+    icon: str = Body("🪙"),
+    creator: str = Body(""),
+):
+    token = bonding_registry.create_token(ticker.upper(), name, icon, creator)
+    return token.to_dict()
+
+
+@app.post("/api/bonding/buy")
+async def bonding_buy(
+    ticker: str = Body(...),
+    kas_amount: float = Body(...),
+    buyer: str = Body(...),
+):
+    token = bonding_registry.get_token(ticker.upper())
+    if not token:
+        raise HTTPException(404, f"Token {ticker} not found")
+    result = token.buy(kas_amount, buyer)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    bonding_registry.check_graduation(ticker.upper())
+    bonding_registry._save()
+    return result
+
+
+@app.post("/api/bonding/sell")
+async def bonding_sell(
+    ticker: str = Body(...),
+    token_amount: float = Body(...),
+    seller: str = Body(...),
+):
+    token = bonding_registry.get_token(ticker.upper())
+    if not token:
+        raise HTTPException(404, f"Token {ticker} not found")
+    result = token.sell(token_amount, seller)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    bonding_registry._save()
+    return result
+
+
+@app.get("/api/bonding/holders/{ticker}")
+async def bonding_holders(ticker: str):
+    token = bonding_registry.get_token(ticker.upper())
+    if not token:
+        raise HTTPException(404, f"Token {ticker} not found")
+    return {"holders": token.holders}
+
+
+@app.post("/api/bonding/graduate/{ticker}")
+async def graduate_token(ticker: str):
+    """Manually trigger graduation for testing."""
+    result = bonding_registry.check_graduation(ticker.upper())
+    if not result:
+        token = bonding_registry.get_token(ticker.upper())
+        if not token:
+            raise HTTPException(404, f"Token {ticker} not found")
+        if token.graduated:
+            raise HTTPException(400, "Already graduated")
+        raise HTTPException(400, f"Not enough KAS raised ({token.kas_raised:.2f}/{GRADUATION_THRESHOLD_KAS})")
+
+    # Create the locked liquidity pool
+    token = bonding_registry.get_token(ticker.upper())
+    liquidity_registry.create_pool(ticker.upper(), token.kas_raised, token.supply_sold)
+    return {"graduated": True, "pool": liquidity_registry.get_pool(ticker.upper()).to_dict()}
+
+
+# ========== GRADUATED AMM POOL (LOCKED LIQUIDITY) ==========
+
+@app.get("/api/pool/list")
+async def list_pools():
+    return {"pools": liquidity_registry.list_pools()}
+
+
+@app.get("/api/pool/{ticker}")
+async def get_pool(ticker: str):
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    return pool.to_dict()
+
+
+@app.get("/api/pool/quote/{ticker}")
+async def pool_quote(ticker: str, kas_amount: float = Query(0), token_amount: float = Query(0)):
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    return pool.quote_swap(kas_amount, token_amount)
+
+
+@app.post("/api/pool/swap/buy")
+async def pool_swap_buy(
+    ticker: str = Body(...),
+    kas_amount: float = Body(...),
+    user: str = Body(...),
+):
+    """Buy tokens with KAS."""
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    result = pool.swap_kas_for_tokens(kas_amount, user)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    liquidity_registry._save()
+    return result
+
+
+@app.post("/api/pool/swap/sell")
+async def pool_swap_sell(
+    ticker: str = Body(...),
+    token_amount: float = Body(...),
+    user: str = Body(...),
+):
+    """Sell tokens for KAS."""
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    result = pool.swap_tokens_for_kas(token_amount, user)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    liquidity_registry._save()
+    return result
+
+
+@app.post("/api/pool/add-liquidity")
+async def pool_add_liquidity(
+    ticker: str = Body(...),
+    kas_amount: float = Body(...),
+    token_amount: float = Body(...),
+    user: str = Body(...),
+):
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    result = pool.add_liquidity(kas_amount, token_amount, user)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    liquidity_registry._save()
+    return result
+
+
+@app.post("/api/pool/remove-liquidity")
+async def pool_remove_liquidity(
+    ticker: str = Body(...),
+    shares: float = Body(...),
+    user: str = Body(...),
+):
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    result = pool.remove_liquidity(shares, user)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    liquidity_registry._save()
+    return result
+
+
+@app.get("/api/pool/user-lp/{ticker}/{user}")
+async def pool_user_lp(ticker: str, user: str):
+    pool = liquidity_registry.get_pool(ticker.upper())
+    if not pool:
+        raise HTTPException(404, f"Pool {ticker} not found")
+    shares = pool.get_user_lp(user)
+    return {"ticker": ticker.upper(), "user": user, "lpShares": round(shares, 6)}
 
 
 # ========== FRONTEND ==========
