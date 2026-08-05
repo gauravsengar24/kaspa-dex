@@ -31,7 +31,7 @@ export default function PriceTicker({ prices, loading, onRefresh }: PriceTickerP
   const changePositive = hasChange && kas.change24h > 0
 
   return (
-    <div className="flex items-center gap-4 text-sm px-4 py-1.5 bg-kaspa-surface/50 border-b border-kaspa-border/20 overflow-hidden">
+    <div className="flex items-center gap-4 text-sm px-4 py-1.5 overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", borderTop: "1px solid rgba(255,255,255,0.07)" }}>
       <div className="flex items-center gap-2 shrink-0">
         <span className="text-kaspa-muted text-xs font-medium uppercase tracking-wider">Live</span>
         <span className="w-1.5 h-1.5 rounded-full bg-kaspa-green animate-pulse" />

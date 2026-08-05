@@ -1,18 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  --color-kaspa-pink: #f213a4;
-  --color-kaspa-purple: #7c3aed;
-  --color-kaspa-dark: #0d0b1a;
-  --color-kaspa-card: #1a1628;
-  --color-kaspa-border: #2a2540;
-  --color-kaspa-gold: #f59e0b;
-  --color-kaspa-green: #10b981;
-  --color-kaspa-red: #ef4444;
-  --color-kaspa-surface: #131020;
-  --color-kaspa-muted: #6b6580;
-  --font-display: "Plus Jakarta Sans", sans-serif;
-  --font-body: "Inter", sans-serif;
+  --color-kaspa-pink: #8ea5ff;
+  --color-kaspa-purple: #a855f7;
+  --color-kaspa-dark: #070810;
+  --color-kaspa-card: #0f1120;
+  --color-kaspa-border: rgba(255, 255, 255, 0.09);
+  --color-kaspa-gold: #f8c86a;
+  --color-kaspa-green: #3ddc97;
+  --color-kaspa-red: #ff6b7a;
+  --color-kaspa-surface: #101324;
+  --color-kaspa-muted: rgba(255, 255, 255, 0.42);
+  --color-kaspa-cyan: #5cd6ff;
+  --color-kaspa-accent: #7aa2ff;
+  --color-kaspa-teal: #30e0c8;
+  --color-kaspa-blue: #6aa0ff;
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 }
 
 html {
@@ -21,69 +26,94 @@ html {
 
 body {
   font-family: var(--font-body);
-  background: var(--color-kaspa-dark);
-  color: #f5f5f5;
   min-height: 100dvh;
+  color: #f2f4ff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #070810;
+  background-image:
+    radial-gradient(1200px 800px at 15% -10%, rgba(90, 130, 255, 0.16), transparent 55%),
+    radial-gradient(1000px 700px at 105% 0%, rgba(168, 85, 247, 0.14), transparent 55%),
+    radial-gradient(900px 900px at 50% 120%, rgba(48, 224, 200, 0.1), transparent 60%),
+    linear-gradient(180deg, #070810 0%, #0a0c18 100%);
+  background-attachment: fixed;
 }
 
-@keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+::selection {
+  background: rgba(124, 162, 255, 0.28);
+  color: #ffffff;
 }
 
-@utility animate-gradient {
-  animation: gradient-shift 8s ease infinite;
-  background-size: 200% 200%;
-}
-
+/* ------- Glass System (3-layer) ------- */
 @utility glass {
-  background: rgba(26, 22, 40, 0.6);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(42, 37, 64, 0.5);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.07), rgba(12, 14, 26, 0.45));
+  backdrop-filter: blur(25px) saturate(200%);
+  -webkit-backdrop-filter: blur(25px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  position: relative;
+  transition: border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 @utility glass-strong {
-  background: rgba(26, 22, 40, 0.85);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(42, 37, 64, 0.8);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.09), rgba(14, 16, 30, 0.7));
+  backdrop-filter: blur(30px) saturate(220%) brightness(1.05);
+  -webkit-backdrop-filter: blur(30px) saturate(220%) brightness(1.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 12px 44px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  position: relative;
 }
 
 @utility text-gradient {
-  background: linear-gradient(135deg, var(--color-kaspa-pink), var(--color-kaspa-purple));
+  background: linear-gradient(120deg, #5cd6ff, #8ea5ff 40%, #c084fc 80%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
+@utility glow-cyan {
+  box-shadow: 0 0 24px rgba(92, 214, 255, 0.22), 0 0 72px rgba(92, 214, 255, 0.1);
+}
+
 @utility glow-pink {
-  box-shadow: 0 0 20px rgba(242, 19, 164, 0.3), 0 0 60px rgba(242, 19, 164, 0.1);
+  box-shadow: 0 0 24px rgba(142, 165, 255, 0.22), 0 0 72px rgba(142, 165, 255, 0.1);
 }
 
 @utility glow-purple {
-  box-shadow: 0 0 20px rgba(124, 58, 237, 0.3), 0 0 60px rgba(124, 58, 237, 0.1);
+  box-shadow: 0 0 24px rgba(168, 85, 247, 0.22), 0 0 72px rgba(168, 85, 247, 0.1);
 }
 
 @utility input-field {
-  background: rgba(13, 11, 26, 0.8);
-  border: 1px solid var(--color-kaspa-border);
+  background: rgba(6, 7, 14, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
   padding: 16px 20px;
-  color: #f5f5f5;
+  color: #f2f4ff;
   font-size: 24px;
   font-weight: 600;
   width: 100%;
   outline: none;
   transition: border-color 0.2s;
+  backdrop-filter: blur(12px);
 }
 
 .input-field:focus {
-  border-color: var(--color-kaspa-pink);
+  border-color: rgba(92, 214, 255, 0.5);
 }
 
 @utility btn-primary {
-  background: linear-gradient(135deg, var(--color-kaspa-pink), var(--color-kaspa-purple));
+  background: linear-gradient(120deg, #7aa2ff, #8ea5ff 45%, #c084fc);
   color: white;
   font-weight: 700;
   font-size: 16px;
@@ -91,12 +121,18 @@ body {
   border-radius: 16px;
   border: none;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    0 8px 24px rgba(122, 162, 255, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
+  filter: brightness(1.08);
   transform: translateY(-1px);
+  box-shadow:
+    0 12px 32px rgba(122, 162, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .btn-primary:active {
@@ -104,30 +140,33 @@ body {
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
 @utility btn-secondary {
-  background: rgba(42, 37, 64, 0.6);
-  color: #f5f5f5;
+  background: rgba(255, 255, 255, 0.05);
+  color: #f2f4ff;
   font-weight: 600;
   padding: 10px 16px;
   border-radius: 12px;
-  border: 1px solid var(--color-kaspa-border);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(16px) saturate(160%);
 }
 
 .btn-secondary:hover {
-  background: rgba(42, 37, 64, 0.9);
-  border-color: var(--color-kaspa-pink);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(92, 214, 255, 0.45);
 }
 
+/* ------- Animations ------- */
 @keyframes pulse-glow {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.8; }
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.85; }
 }
 
 @utility animate-pulse-glow {
@@ -140,7 +179,7 @@ body {
 }
 
 @utility animate-slide-up {
-  animation: slide-up 0.3s ease-out;
+  animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes shimmer {
@@ -149,9 +188,40 @@ body {
 }
 
 @utility animate-shimmer {
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
   background-size: 200% 100%;
   animation: shimmer 2s infinite;
+}
+
+/* ------- iMac dock ------- */
+@utility dock-shell {
+  background: linear-gradient(180deg, rgba(28, 33, 56, 0.5), rgba(16, 19, 36, 0.66));
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -8px 24px rgba(255, 255, 255, 0.03);
+}
+
+@utility dock-icon {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
+  backdrop-filter: blur(16px) saturate(180%);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dock-icon:hover {
+  transform: translateY(-8px) scale(1.14);
+  border-color: rgba(92, 214, 255, 0.5);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.5),
+    0 0 22px rgba(92, 214, 255, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 ::-webkit-scrollbar {
@@ -163,10 +233,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-kaspa-border);
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-kaspa-muted);
+  background: rgba(255, 255, 255, 0.25);
 }

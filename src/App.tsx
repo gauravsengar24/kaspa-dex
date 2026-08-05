@@ -2,6 +2,7 @@ import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet, Droplets } from "lucide-react"
 import Header from "./components/Header"
+import Dock from "./components/Dock"
 import P2PSwap from "./components/P2PSwap"
 import DexSwap from "./components/DexSwap"
 import BondingCurve from "./components/BondingCurve"
@@ -131,10 +132,17 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-dvh bg-kaspa-dark flex flex-col">
+    <div className="min-h-dvh relative flex flex-col overflow-x-clip">
+      {/* Aurora ambient background */}
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute -top-40 -left-32 w-[480px] h-[480px] rounded-full opacity-35 blur-[110px]" style={{ background: "radial-gradient(circle, rgba(90,130,255,0.5), transparent 60%)" }} />
+        <div className="absolute top-1/3 -right-40 w-[520px] h-[520px] rounded-full opacity-30 blur-[120px]" style={{ background: "radial-gradient(circle, rgba(168,85,247,0.45), transparent 60%)" }} />
+        <div className="absolute -bottom-44 left-1/3 w-[560px] h-[560px] rounded-full opacity-25 blur-[130px]" style={{ background: "radial-gradient(circle, rgba(48,224,200,0.4), transparent 60%)" }} />
+      </div>
+
       <Header activeTab={activeTab} onTabChange={setActiveTab} tabs={tabs.map(({ id, label }) => ({ id, label }))} />
 
-      <main className="flex-1 w-full max-w-6xl mx-auto px-4 pb-32 pt-6">
+      <main className="flex-1 w-full max-w-6xl mx-auto px-4 pb-40 pt-6">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -149,6 +157,8 @@ export default function App() {
       </main>
 
       <Footer />
+
+      <Dock tabs={tabs} activeTab={activeTab} onTabChange={(t) => setActiveTab(t as TabId)} />
     </div>
   )
 }
