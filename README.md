@@ -1,6 +1,6 @@
 ---
 title: Aetheris — Uniframe DeFi & GameFi on Kaspa
-emoji: ✦
+emoji: 💠
 colorFrom: blue
 colorTo: purple
 sdk: docker
