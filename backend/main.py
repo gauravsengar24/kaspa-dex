@@ -138,7 +138,7 @@ from backend.covenants.engine import CovenantSwapEngine
 from backend.covenants.store import CovenantStore
 from backend.covenants import config as covenant_config
 
-covenant_store = CovenantStore(os.environ.get("COVENANT_DB_PATH", "data/covenant.db"))
+covenant_store = CovenantStore(os.environ.get("COVENANT_DB_PATH", os.path.join(os.environ.get("DATA_DIR", "data"), "covenant.db")))
 covenant_engine = CovenantSwapEngine(covenant_store)
 
 

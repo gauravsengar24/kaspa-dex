@@ -1,5 +1,6 @@
 """SQLite persistence for covenant swap orders + off-chain token credits."""
 import json
+import os
 import time
 import uuid
 from typing import Any, Optional
@@ -15,6 +16,7 @@ class CovenantStore:
         self._db: Optional[aiosqlite.Connection] = None
 
     async def init(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute(
