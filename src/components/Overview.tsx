@@ -19,6 +19,7 @@ import { GlassCard, SectionLabel } from "./aetheris/GlassCard"
 import { Sparkline } from "./aetheris/Sparkline"
 import { usePrices } from "../hooks/usePrices"
 import { usePools } from "../hooks/usePools"
+import { useKcc20State } from "../hooks/useKcc20State"
 import { NETWORK } from "../utils/constants"
 
 interface NetworkInfo {
@@ -52,6 +53,7 @@ const toneClass = {
   emerald: "text-[color:var(--emerald-accent)]",
   gold: "text-[color:var(--gold-accent)]",
   violet: "text-[color:var(--violet-accent)]",
+  crimson: "text-[color:var(--crimson)]",
 }
 
 const sparkData = [22, 24, 23, 26, 28, 27, 30, 34, 32, 38, 42, 40, 44, 47, 45, 48]
@@ -62,6 +64,7 @@ const fmt = (n: number, d = 2) =>
 export default function Overview({ onNavigate }: OverviewProps) {
   const { prices } = usePrices()
   const { pools } = usePools()
+  const { trades: l1Trades, pools: l1Pools, info: l1Info } = useKcc20State()
   const [network, setNetwork] = useState<NetworkInfo | null>(null)
   const [orders, setOrders] = useState<OrderInfo[]>([])
 
@@ -98,13 +101,32 @@ export default function Overview({ onNavigate }: OverviewProps) {
   const openOrders = orders.filter((o) => o.status === "OPEN").length
   const rate = network?.kasUsdtRate ?? 0.15
 
-  const activity = [
+  const baseActivity: {
+    id: number
+    type: string
+    detail: string
+    when: string
+    tone: string
+    txid?: string
+  }[] = [
     { id: 1, type: "Swap", detail: `1,240 KAS → ${(1240 * rate).toFixed(2)} USDT`, when: "2m", tone: "emerald" },
     { id: 2, type: "Network", detail: network?.network ?? "testnet-10", when: network?.chainDaa ? `DAA ${network.chainDaa.toLocaleString()}` : "live", tone: "gold" },
     { id: 3, type: "Rate", detail: `1 KAS ≈ ${rate.toFixed(2)} USDT`, when: "oracle", tone: "violet" },
-    { id: 4, type: "Liquidity", detail: `${pools.length} live pools · $${fmt(tvl, 0)} TVL`, when: "30s", tone: "emerald" },
+    { id: 4, type: "Liquidity", detail: `${l1Pools.length || pools.length} live pools · $${fmt(tvl, 0)} TVL`, when: "30s", tone: "emerald" },
     { id: 5, type: "Covenants", detail: `${openOrders} open HTLC orders`, when: "on-chain", tone: "violet" },
+    { id: 6, type: "L1 Trades", detail: `${l1Trades.length} KCC-20 trades decoded`, when: l1Info.synced ? `DAA ${l1Info.daaScore?.toLocaleString() ?? "—"}` : "syncing", tone: "gold" },
   ]
+
+  const feed = l1Trades.slice(0, 4).map((t) => ({
+    id: 100 + t.id,
+    type: t.kind,
+    detail: t.amount,
+    when: t.when,
+    tone: t.kind === "Buy" ? ("emerald" as const) : ("crimson" as const),
+    txid: t.txid,
+  }))
+
+  const activity = [...baseActivity, ...feed]
 
   return (
     <>
@@ -168,9 +190,10 @@ export default function Overview({ onNavigate }: OverviewProps) {
         <GlassCard className="col-span-12 lg:col-span-4">
           <SectionLabel eyebrow="Live" title="Recent activity" right={<Activity className="h-4 w-4 text-[color:var(--emerald-accent)]" />} />
           <div className="space-y-2">
-            {activity.map((a) => (
+            {[...activity, ...feed].map((a) => (
               <div
                 key={a.id}
+                title={a.txid ? `TX ${a.txid}` : undefined}
                 className="flex items-center justify-between rounded-lg border border-border/40 bg-[oklch(0.16_0.025_265)]/60 px-3 py-2"
               >
                 <div className="min-w-0">

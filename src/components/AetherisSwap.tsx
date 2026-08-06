@@ -10,10 +10,10 @@ import { Sparkline } from "./aetheris/Sparkline"
 import { ActionDialog } from "./aetheris/ActionDialog"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
+import { useKcc20State } from "../hooks/useKcc20State"
 import { KASPA_TOKEN } from "../utils/constants"
 import type { TokenInfo } from "../types"
 import {
-  discoverTokens,
   quoteBuy,
   quoteSell,
   walletBridge,
@@ -28,23 +28,6 @@ import {
 type Pool = { id: number; pair: string; tvl: string; vol: string; apr: string; data: number[] }
 
 type Trade = { id: number; kind: "Buy" | "Sell"; amount: string; price: string; when: string }
-
-const pools: Pool[] = [
-  { id: 1, pair: "KAS / USDT", tvl: "$142.8M", vol: "$28.4M", apr: "24.8%", data: [12, 14, 13, 16, 18, 17, 20, 22, 25] },
-  { id: 2, pair: "AETH / KAS", tvl: "$88.2M", vol: "$14.1M", apr: "38.4%", data: [8, 10, 9, 12, 14, 16, 18, 17, 20] },
-  { id: 3, pair: "KAS / USDC", tvl: "$61.1M", vol: "$9.7M", apr: "18.2%", data: [10, 11, 10, 12, 11, 13, 12, 14, 13] },
-  { id: 4, pair: "AETH / USDT", tvl: "$42.4M", vol: "$6.8M", apr: "44.6%", data: [4, 6, 5, 8, 10, 9, 12, 14, 16] },
-  { id: 5, pair: "USDT / USDC", tvl: "$204.1M", vol: "$32.2M", apr: "5.4%", data: [3, 3, 4, 3, 4, 4, 4, 5, 4] },
-]
-
-const trades: Trade[] = [
-  { id: 1, kind: "Buy", amount: "1,240 KAS", price: "$0.1646", when: "2s" },
-  { id: 2, kind: "Sell", amount: "820 KAS", price: "$0.1647", when: "12s" },
-  { id: 3, kind: "Buy", amount: "3,120 KAS", price: "$0.1645", when: "24s" },
-  { id: 4, kind: "Buy", amount: "410 AETH", price: "$4.82", when: "48s" },
-  { id: 5, kind: "Sell", amount: "60 AETH", price: "$4.81", when: "1m" },
-  { id: 6, kind: "Buy", amount: "1,004 KAS", price: "$0.1644", when: "1m" },
-]
 
 const fmt = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })
@@ -65,13 +48,16 @@ export default function AetherisSwap() {
   const [quoteToken, setQuoteToken] = useState("")
   const [quoteAmt, setQuoteAmt] = useState("")
   const [lpOpen, setLpOpen] = useState(false)
-  const [selectedPool, setSelectedPool] = useState<Pool>(pools[0])
+  const [selectedPool, setSelectedPool] = useState<Pool | null>(null)
+
+  const { pools: livePools, trades: liveTrades, tokens: kccTokens, info: l1Info } = useKcc20State()
+
+  const pools: Pool[] = livePools
+  const trades: Trade[] = liveTrades
 
   useEffect(() => {
-    discoverTokens()
-      .then(setTokens)
-      .catch(() => setTokens([]))
-  }, [])
+    if (kccTokens.length) setTokens(kccTokens)
+  }, [kccTokens])
 
   const sellMode = from.ticker !== "KAS"
   const kccToken = useMemo(() => {
@@ -193,15 +179,24 @@ export default function AetherisSwap() {
         title="Swap & Dynamic Pools"
         subtitle="Route through weighted multi-asset pools with KRON covenants. Minimum-received guaranteed on-chain."
         right={
-          <button
-            type="button"
-            onClick={() => setShowSettings((s) => !s)}
-            aria-label="Swap settings"
-            aria-expanded={showSettings}
-            className={`glass glass-border grid h-9 w-9 place-items-center rounded-xl transition-colors ${showSettings ? "text-[color:var(--emerald-accent)]" : "text-muted-foreground hover:text-foreground"}`}
-          >
-            <Settings2 className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <span
+              className="hidden items-center gap-1.5 rounded-lg border border-border/60 bg-background/40 px-2.5 py-1.5 font-mono text-[10px] tracking-wide text-muted-foreground sm:flex"
+              title={`State read from ${l1Info.rpcUrl}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${l1Info.synced ? "bg-[color:var(--emerald-accent)]" : "bg-amber-400"}`} data-live />
+              DIRECT FROM NODE{l1Info.daaScore != null ? ` · DAA ${l1Info.daaScore}` : ""}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSettings((s) => !s)}
+              aria-label="Swap settings"
+              aria-expanded={showSettings}
+              className={`glass glass-border grid h-9 w-9 place-items-center rounded-xl transition-colors ${showSettings ? "text-[color:var(--emerald-accent)]" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              <Settings2 className="h-4 w-4" />
+            </button>
+          </div>
         }
       />
 
@@ -310,28 +305,32 @@ export default function AetherisSwap() {
         </GlassCard>
 
         <GlassCard className="col-span-12 lg:col-span-3">
-          <SectionLabel eyebrow="Add Liquidity" title={`Provide to ${selectedPool.pair}`} />
-          <div className="space-y-3">
-            <div className="recessed rounded-xl p-3">
-              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">TVL</div>
-              <div className="font-display text-xl font-bold">{selectedPool.tvl}</div>
-            </div>
-            <div className="recessed rounded-xl p-3">
-              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">24h Volume</div>
-              <div className="font-display text-xl font-bold">{selectedPool.vol}</div>
-            </div>
-            <div className="rounded-xl border border-[color:var(--emerald-accent)]/30 bg-[color:var(--emerald-accent)]/5 p-3 font-mono text-[11px]">
-              <div className="flex justify-between"><span className="text-muted-foreground">Fee tier</span><span className="text-foreground">0.30%</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Est. APR</span><span className="text-[color:var(--emerald-accent)]">{selectedPool.apr}</span></div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setLpOpen(true)}
-              className="w-full rounded-xl border border-[color:var(--emerald-accent)]/50 bg-[color:var(--emerald-accent)]/10 py-2 font-display text-sm font-bold text-[color:var(--emerald-accent)] transition-colors hover:bg-[color:var(--emerald-accent)]/20"
-            >
-              Provide Liquidity
-            </button>
-          </div>
+          {selectedPool && (
+            <>
+              <SectionLabel eyebrow="Add Liquidity" title={`Provide to ${selectedPool.pair}`} />
+              <div className="space-y-3">
+                <div className="recessed rounded-xl p-3">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">TVL</div>
+                  <div className="font-display text-xl font-bold">{selectedPool.tvl}</div>
+                </div>
+                <div className="recessed rounded-xl p-3">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">24h Volume</div>
+                  <div className="font-display text-xl font-bold">{selectedPool.vol}</div>
+                </div>
+                <div className="rounded-xl border border-[color:var(--emerald-accent)]/30 bg-[color:var(--emerald-accent)]/5 p-3 font-mono text-[11px]">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Fee tier</span><span className="text-foreground">0.30%</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Est. APR</span><span className="text-[color:var(--emerald-accent)]">{selectedPool.apr}</span></div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLpOpen(true)}
+                  className="w-full rounded-xl border border-[color:var(--emerald-accent)]/50 bg-[color:var(--emerald-accent)]/10 py-2 font-display text-sm font-bold text-[color:var(--emerald-accent)] transition-colors hover:bg-[color:var(--emerald-accent)]/20"
+                >
+                  Provide Liquidity
+                </button>
+              </div>
+            </>
+          )}
         </GlassCard>
 
         <GlassCard className="col-span-12 lg:col-span-8">
@@ -359,27 +358,29 @@ export default function AetherisSwap() {
         }}
       />
 
-      <ActionDialog
-        open={lpOpen}
-        onClose={() => setLpOpen(false)}
-        eyebrow="Add liquidity"
-        title={selectedPool.pair}
-        token="USD"
-        balanceLabel="Wallet $48,204"
-        maxAmount={48204}
-        confirmLabel="Provide liquidity"
-        details={[
-          ["Pool", selectedPool.pair],
-          ["Est. APR", selectedPool.apr],
-          ["Fee tier", "0.30%"],
-          ["Deposit split", "50 / 50 weighted"],
-        ]}
-        onConfirm={(v) =>
-          toast.success(`Added $${fmt(v)} to ${selectedPool.pair}`, {
-            description: `Earning ${selectedPool.apr} APR · LP tokens minted`,
-          })
-        }
-      />
+      {selectedPool && (
+        <ActionDialog
+          open={lpOpen}
+          onClose={() => setLpOpen(false)}
+          eyebrow="Add liquidity"
+          title={selectedPool.pair}
+          token="USD"
+          balanceLabel="Wallet $48,204"
+          maxAmount={48204}
+          confirmLabel="Provide liquidity"
+          details={[
+            ["Pool", selectedPool.pair],
+            ["Est. APR", selectedPool.apr],
+            ["Fee tier", "0.30%"],
+            ["Deposit split", "50 / 50 weighted"],
+          ]}
+          onConfirm={(v) =>
+            toast.success(`Added $${fmt(v)} to ${selectedPool.pair}`, {
+              description: `Earning ${selectedPool.apr} APR · LP tokens minted`,
+            })
+          }
+        />
+      )}
     </>
   )
 }
