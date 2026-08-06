@@ -8,3 +8,4 @@ contracts/out/
 contracts/broadcast/
 contracts/lib/
 *.tsbuildinfo
+.venv/

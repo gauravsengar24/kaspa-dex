@@ -1,5 +1,5 @@
 import { motion } from "framer-motion"
-import { Settings } from "lucide-react"
+import { Settings, Sparkles } from "lucide-react"
 import WalletConnect from "./WalletConnect"
 import PriceTicker from "./PriceTicker"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
@@ -28,13 +28,19 @@ export default function Header({ activeTab, onTabChange, tabs }: HeaderProps) {
 
           <a
             href="#"
-            className="flex items-center gap-2 font-display font-extrabold text-lg shrink-0"
-            onClick={() => onTabChange("swap")}
+            className="flex items-center gap-2.5 font-display font-extrabold text-lg shrink-0"
+            onClick={() => onTabChange("overview")}
           >
-            <span className="relative w-8 h-8 rounded-xl bg-gradient-to-br from-kaspa-blue to-kaspa-purple flex items-center justify-center text-xs font-bold text-white glow-cyan">
-              K
+            <span className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-kaspa-blue via-kaspa-purple to-kaspa-pink flex items-center justify-center text-xs font-bold text-white glow-purple overflow-hidden">
+              <Sparkles size={15} className="relative z-10" />
+              <span className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/25 to-transparent" />
             </span>
-            <span className="hidden md:inline text-gradient tracking-tight">Kaspa Swap</span>
+            <span className="hidden md:flex flex-col leading-none">
+              <span className="text-gradient tracking-tight">Aetheris</span>
+              <span className="text-[9px] font-medium tracking-[0.22em] uppercase text-kaspa-muted mt-1">
+                DeFi · GameFi on Kaspa
+              </span>
+            </span>
           </a>
 
           <nav className="hidden lg:flex items-center gap-0.5 ml-auto">

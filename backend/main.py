@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -132,16 +133,30 @@ perp_engine = PerpEngine()
 # KAS price (updated by CoinGecko oracle periodically)
 KAS_USDT_RATE = 0.15  # updated by prices.py
 
+# ========== Covenant HTLC Engine (on-chain swaps, KIP-17) ==========
+from backend.covenants.engine import CovenantSwapEngine
+from backend.covenants.store import CovenantStore
+from backend.covenants import config as covenant_config
+
+covenant_store = CovenantStore(os.environ.get("COVENANT_DB_PATH", "data/covenant.db"))
+covenant_engine = CovenantSwapEngine(covenant_store)
+
 
 # ========== FastAPI App ==========
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await orderbook.initialize()
+    await covenant_store.init()
     health = await node_client.check_health()
     print(f"Kaspa mainnet node connected: {health}")
     print(f"Active orders: {orderbook.count()}")
-    yield
+    watcher = asyncio.create_task(covenant_engine.watcher_loop())
+    try:
+        yield
+    finally:
+        watcher.cancel()
+        await covenant_store.close()
 
 
 app = FastAPI(
@@ -359,6 +374,118 @@ async def get_swap_quote(req: SwapRequest):
         "route": [req.fromToken, req.toToken],
         "expiry": int(time.time()) + 30,
     }
+
+
+# ========== COVENANT HTLC SWAP (on-chain, KIP-17) ==========
+
+@app.get("/api/network")
+async def network_info():
+    """Network info the frontend needs: DEX address, rate, covenant support."""
+    net = covenant_engine.network
+    daa = None
+    try:
+        daa = await covenant_engine.rpc.current_daa()
+    except Exception:
+        pass
+    return {
+        "dexAddress": net["dex_address"],
+        "kasUsdtRate": covenant_config.usdt_per_kas(),
+        "network": net["label"],
+        "explorer": net["explorer"],
+        "covenants": True,
+        "htlcEnabled": True,
+        "chainDaa": daa,
+        "timeoutDaa": covenant_config.DEFAULT_TIMEOUT_DAA,
+    }
+
+
+@app.get("/api/token-balances/{address}")
+async def token_balances(address: str):
+    """Off-chain credited token balances (credited atomically on claim)."""
+    credits = await covenant_store.get_credits(address)
+    return {"address": address, "balances": credits}
+
+
+@app.post("/api/log-swap")
+async def log_swap(payload: dict = Body(...)):
+    """Legacy credit endpoint: credit a user's off-chain token balance."""
+    address = payload.get("address")
+    token_out = (payload.get("token_out") or payload.get("token") or "USDT").upper()
+    amount_out = float(payload.get("amount_out") or 0)
+    if not address or amount_out <= 0:
+        raise HTTPException(status_code=400, detail="address and amount_out required")
+    balance = await covenant_store.credit(address, token_out, amount_out)
+    return {"address": address, "token": token_out, "credited": amount_out, "balance": balance}
+
+
+@app.post("/api/covenant/orders", status_code=201)
+async def create_covenant_order(
+    maker_address: str = Body(...),
+    amount_kas: float = Body(...),
+    token_out: str = Body("USDT"),
+):
+    """Create an on-chain HTLC order: KAS locked to a covenant script."""
+    try:
+        return await covenant_engine.create_order(maker_address, amount_kas, token_out)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Covenant engine error: {e}")
+
+
+@app.get("/api/covenant/orders")
+async def list_covenant_orders(maker_address: str = Query(None)):
+    """List covenant orders (optionally filtered by maker address)."""
+    return {"orders": await covenant_engine.list_orders(maker_address)}
+
+
+@app.get("/api/covenant/orders/{order_id}")
+async def get_covenant_order(order_id: str):
+    order = await covenant_engine.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
+
+
+@app.post("/api/covenant/orders/{order_id}/claim")
+async def claim_covenant_order(order_id: str):
+    """DEX claims the HTLC by revealing the secret on-chain; USDT is credited."""
+    try:
+        return await covenant_engine.claim_order(order_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Order not found")
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Claim failed: {e}")
+
+
+@app.post("/api/covenant/orders/{order_id}/refund")
+async def refund_covenant_order(order_id: str, maker_private_key: str = Body(None, embed=True)):
+    """Maker refunds after timeout (server-side key by default, or user-supplied)."""
+    try:
+        return await covenant_engine.refund_order(order_id, maker_private_key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Order not found")
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Refund failed: {e}")
+
+
+@app.post("/api/covenant/orders/{order_id}/fund-from-dex")
+async def fund_covenant_order_from_dex(
+    order_id: str,
+    amount_kas: float = Body(...),
+    change_address: str = Body(None),
+):
+    """Test helper: fund an HTLC from the DEX treasury (dev/validation only)."""
+    try:
+        return await covenant_engine.fund_htlc_from_dex(order_id, amount_kas, change_address)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Order not found")
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ========== AMM Engine (NEW) ==========

@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet, Droplets } from "lucide-react"
+import { ArrowLeftRight, LayoutDashboard, History, Landmark, PiggyBank, TrendingUp, Vote, Rocket, Route, Bot, User, Zap, SendToBack, Layers, PieChart, ArrowRightLeft, Wallet, Droplets, LayoutGrid } from "lucide-react"
 import Header from "./components/Header"
 import Dock from "./components/Dock"
+import Overview from "./components/Overview"
 import P2PSwap from "./components/P2PSwap"
 import DexSwap from "./components/DexSwap"
 import BondingCurve from "./components/BondingCurve"
@@ -28,13 +29,14 @@ import Footer from "./components/Footer"
 import { KASPA_TOKEN } from "./utils/constants"
 import { usePools } from "./hooks/usePools"
 
-export type TabId = "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge" | "module-a" | "module-a-pools" | "l1-swap" | "wallet" | "launch" | "pool"
+export type TabId = "overview" | "swap" | "pools" | "history" | "lending" | "yield" | "prediction" | "governance" | "launchpad" | "router" | "ai" | "profile" | "perps" | "bridge" | "module-a" | "module-a-pools" | "l1-swap" | "wallet" | "launch" | "pool"
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>("swap")
+  const [activeTab, setActiveTab] = useState<TabId>("overview")
   const { pools } = usePools()
 
   const tabs: { id: TabId; label: string; icon: any }[] = [
+    { id: "overview", label: "Overview", icon: LayoutGrid },
     { id: "swap", label: "Swap", icon: ArrowLeftRight },
     { id: "l1-swap", label: "L1 DEX", icon: ArrowRightLeft },
     { id: "launch", label: "Launch", icon: Rocket },
@@ -58,6 +60,8 @@ export default function App() {
 
   const renderTab = () => {
     switch (activeTab) {
+      case "overview":
+        return <Overview onNavigate={(tab) => setActiveTab(tab as TabId)} />
       case "swap":
         return <DexSwap />
       case "l1-swap":

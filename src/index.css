@@ -39,6 +39,34 @@ body {
   background-attachment: fixed;
 }
 
+/* Aetheris aurora: layered conic + radial glow over deep space */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 600px at 8% 4%, rgba(92, 214, 255, 0.07), transparent 60%),
+    radial-gradient(1000px 700px at 92% 8%, rgba(192, 132, 252, 0.08), transparent 60%),
+    radial-gradient(1100px 800px at 50% 110%, rgba(138, 165, 255, 0.06), transparent 65%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    115deg,
+    transparent 0px,
+    transparent 42px,
+    rgba(255, 255, 255, 0.008) 42px,
+    rgba(255, 255, 255, 0.008) 43px
+  );
+}
+
 ::selection {
   background: rgba(124, 162, 255, 0.28);
   color: #ffffff;
@@ -77,6 +105,13 @@ body {
 
 @utility text-gradient {
   background: linear-gradient(120deg, #5cd6ff, #8ea5ff 40%, #c084fc 80%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@utility text-aether {
+  background: linear-gradient(110deg, #5cd6ff 0%, #8ea5ff 30%, #c084fc 60%, #f472b6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
