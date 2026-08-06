@@ -172,9 +172,12 @@ export default function KaspaL1Swap() {
 
   return (
     <div className="max-w-md mx-auto">
-      <div className="glass rounded-2xl p-5">
+      <div className="glass glass-border rounded-2xl p-5">
         <div className="mb-4">
-          <h2 className="text-lg font-display font-bold">On-Chain Swap</h2>
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--emerald-accent)]">
+            Covenant · HTLC
+          </div>
+          <h2 className="mt-1 text-lg font-display font-bold">On-Chain Swap</h2>
           <p className="text-xs text-kaspa-muted mt-0.5">
             Trustless HTLC covenant — KAS locked to a script the DEX can only claim by
             revealing a secret on-chain

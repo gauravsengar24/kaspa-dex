@@ -1,89 +1,146 @@
-import { motion } from "framer-motion"
-import { Settings, Sparkles } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Activity, Fuel, Layers3, Settings, Wallet } from "lucide-react"
 import WalletConnect from "./WalletConnect"
-import PriceTicker from "./PriceTicker"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
+import { usePools } from "../hooks/usePools"
+import { NETWORK } from "../utils/constants"
+import { formatAddress } from "../utils/kaspa"
 
-interface HeaderProps {
-  activeTab: string
-  onTabChange: (tab: any) => void
-  tabs: { id: string; label: string }[]
+interface NetworkInfo {
+  dexAddress: string
+  kasUsdtRate: number
+  network: string
+  explorer: string
+  chainDaa: number | null
 }
 
-export default function Header({ activeTab, onTabChange, tabs }: HeaderProps) {
+export default function Header({
+  onNavigate,
+}: {
+  onNavigate: (tab: string) => void
+}) {
   const wallet = useKaspaWallet()
-  const { prices, loading, refresh } = usePrices()
+  const { prices } = usePrices()
+  const { pools } = usePools()
+  const [network, setNetwork] = useState<NetworkInfo | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`${NETWORK.backend}/api/network`)
+        if (res.ok && !cancelled) setNetwork(await res.json())
+      } catch {
+        /* offline */
+      }
+    }
+    load()
+    const t = setInterval(load, 60_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [])
+
+  const kasPrice = prices.kas.usd || 0.02
+  const tvl = pools.reduce((s, p) => s + (p.tvl || 0), 0)
+  const volume = pools.reduce((s, p) => s + (p.volume24h || 0), 0) * kasPrice
+
+  const stats = [
+    {
+      icon: Layers3,
+      label: "TVL",
+      value: `$${(tvl / 1e6).toFixed(2)}M`,
+      tone: "emerald" as const,
+    },
+    {
+      icon: Fuel,
+      label: "Network",
+      value: network?.network ?? "testnet-10",
+      tone: "gold" as const,
+    },
+    {
+      icon: Activity,
+      label: "Vol 24h",
+      value: `$${volume >= 1e6 ? (volume / 1e6).toFixed(1) + "M" : volume >= 1e3 ? (volume / 1e3).toFixed(1) + "K" : volume.toFixed(0)}`,
+      tone: "violet" as const,
+    },
+  ]
+
+  const toneClass: Record<"emerald" | "gold" | "violet", string> = {
+    emerald: "text-[color:var(--emerald-accent)]",
+    gold: "text-[color:var(--gold-accent)]",
+    violet: "text-[color:var(--violet-accent)]",
+  }
 
   return (
-    <header className="sticky top-0 z-40">
-      <div className="glass-strong border-x-0 border-t-0" style={{ borderLeft: "none", borderRight: "none", borderRadius: "0 0 24px 24px" }}>
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-6">
-          {/* iMac traffic lights */}
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
-            <span className="w-3 h-3 rounded-full bg-[#ff5f57] shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]" />
-            <span className="w-3 h-3 rounded-full bg-[#febc2e] shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]" />
-            <span className="w-3 h-3 rounded-full bg-[#28c840] shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]" />
+    <header className="sticky top-0 z-40 border-b border-border/40 bg-[rgba(11,13,19,0.7)] backdrop-blur-xl">
+      <div className="mx-auto flex h-14 max-w-[1800px] items-center gap-6 px-6">
+        <button
+          onClick={() => onNavigate("overview")}
+          className="flex items-center gap-2 text-left"
+        >
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-[color:var(--emerald-accent)] to-[color:var(--violet-accent)]">
+            <span className="font-display text-sm font-bold text-[color:var(--onyx)]">Æ</span>
           </div>
-
-          <a
-            href="#"
-            className="flex items-center gap-2.5 font-display font-extrabold text-lg shrink-0"
-            onClick={() => onTabChange("overview")}
-          >
-            <span className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-kaspa-blue via-kaspa-purple to-kaspa-pink flex items-center justify-center text-xs font-bold text-white glow-purple overflow-hidden">
-              <Sparkles size={15} className="relative z-10" />
-              <span className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/25 to-transparent" />
-            </span>
-            <span className="hidden md:flex flex-col leading-none">
-              <span className="text-gradient tracking-tight">Aetheris</span>
-              <span className="text-[9px] font-medium tracking-[0.22em] uppercase text-kaspa-muted mt-1">
-                DeFi · GameFi on Kaspa
-              </span>
-            </span>
-          </a>
-
-          <nav className="hidden lg:flex items-center gap-0.5 ml-auto">
-            {tabs.slice(0, 8).map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => onTabChange(tab.id)}
-                className={`relative px-3 py-1.5 text-[13px] font-medium rounded-lg transition-colors ${
-                  activeTab === tab.id ? "text-white" : "text-kaspa-muted hover:text-white"
-                }`}
-              >
-                {activeTab === tab.id && (
-                  <motion.div
-                    layoutId="activeTab"
-                    className="absolute inset-0 rounded-lg"
-                    style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                  />
-                )}
-                <span className="relative z-10">{tab.label}</span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="flex items-center gap-2 ml-auto lg:ml-2">
-            <button className="btn-secondary p-2.5" aria-label="Settings">
-              <Settings size={18} />
-            </button>
-            <WalletConnect
-              connected={wallet.connected}
-              address={wallet.address}
-              balance={wallet.balanceFormatted}
-              connecting={wallet.connecting}
-              detecting={wallet.detecting}
-              kaswareDetected={wallet.kaswareDetected}
-              error={wallet.error}
-              onConnect={wallet.connect}
-              onDisconnect={wallet.disconnect}
-            />
+          <div className="min-w-0">
+            <div className="font-display text-sm font-semibold leading-none tracking-tight">
+              Aetheris
+            </div>
+            <div className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+              Kaspa · L1 + Kasplex L2
+            </div>
           </div>
+        </button>
+
+        <div className="ml-4 hidden flex-1 items-center gap-2 md:flex">
+          {stats.map((s) => (
+            <div
+              key={s.label}
+              className="glass glass-border flex items-center gap-2.5 rounded-xl px-3 py-1.5"
+            >
+              <s.icon className={`h-3.5 w-3.5 ${toneClass[s.tone]}`} strokeWidth={2.25} />
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {s.label}
+                </span>
+                <span className="font-mono text-xs font-semibold text-foreground">
+                  {s.value}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
 
-        <PriceTicker prices={prices} loading={loading} onRefresh={refresh} />
+        <div className="ml-auto flex items-center gap-2">
+          <button className="btn-secondary p-2.5" aria-label="Settings" onClick={() => onNavigate("settings")}>
+            <Settings size={18} />
+          </button>
+          <div className="glass glass-border flex items-center gap-2.5 rounded-xl px-3 py-1.5">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="pulse-node absolute inline-flex h-full w-full rounded-full bg-[color:var(--emerald-accent)] opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--emerald-accent)]" />
+            </span>
+            <Wallet className="h-3.5 w-3.5 text-[color:var(--emerald-accent)]" strokeWidth={2.25} />
+            <span className="font-mono text-xs font-medium text-foreground">
+              {wallet.connected && wallet.address
+                ? formatAddress(wallet.address)
+                : "Not connected"}
+            </span>
+          </div>
+          <WalletConnect
+            connected={wallet.connected}
+            address={wallet.address}
+            balance={wallet.balanceFormatted}
+            connecting={wallet.connecting}
+            detecting={wallet.detecting}
+            kaswareDetected={wallet.kaswareDetected}
+            error={wallet.error}
+            onConnect={wallet.connect}
+            onDisconnect={wallet.disconnect}
+          />
+        </div>
       </div>
     </header>
   )

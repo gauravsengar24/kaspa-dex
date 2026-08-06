@@ -1,119 +1,63 @@
 import { useEffect, useState } from "react"
-import { motion } from "framer-motion"
 import {
-  ArrowLeftRight,
-  Droplets,
-  Rocket,
-  Landmark,
-  Vote,
-  Swords,
-  ArrowRightLeft,
-  ArrowRight,
-  Route,
-  Bot,
-  Zap,
-  Globe,
   Activity,
+  ArrowLeftRight,
+  ArrowUpRight,
+  BarChart3,
+  Coins,
+  Gamepad2,
+  Landmark,
+  Layers3,
+  Rocket,
+  Sprout,
   TrendingUp,
-  ShieldCheck,
-  Sparkles,
+  Wallet,
 } from "lucide-react"
-import PriceChart from "./PriceChart"
+import { PageHeader } from "./aetheris/PageHeader"
+import { StatTile } from "./aetheris/StatTile"
+import { GlassCard, SectionLabel } from "./aetheris/GlassCard"
+import { Sparkline } from "./aetheris/Sparkline"
 import { usePrices } from "../hooks/usePrices"
 import { usePools } from "../hooks/usePools"
 import { NETWORK } from "../utils/constants"
-import { formatUsd } from "../utils/kaspa"
+
+interface NetworkInfo {
+  network: string
+  dexAddress: string
+  kasUsdtRate: number
+  chainDaa: number | null
+}
+
+interface OrderInfo {
+  id: string
+  amount_kas: number
+  token_out: string
+  status: string
+}
 
 interface OverviewProps {
   onNavigate: (tab: string) => void
 }
 
-interface NetworkInfo {
-  dexAddress: string
-  kasUsdtRate: number
-  network: string
-  explorer: string
-  covenants: boolean
-  htlcEnabled: boolean
-  chainDaa: number | null
-  timeoutDaa: number
-}
-
-interface OrderInfo {
-  id: string
-  maker_address: string
-  amount_kas: number
-  token_out: string
-  status: string
-  txid_fund?: string
-  txid_claim?: string
-}
-
-const MODULES = [
-  {
-    id: "swap",
-    title: "Swap",
-    desc: "Instant token swaps with smart routing across all liquidity",
-    icon: ArrowLeftRight,
-    gradient: "from-[#5cd6ff] to-[#8ea5ff]",
-  },
-  {
-    id: "l1-swap",
-    title: "P2P Covenants",
-    desc: "On-chain HTLC atomic swaps with USDT settlement",
-    icon: ShieldCheck,
-    gradient: "from-[#8ea5ff] to-[#c084fc]",
-  },
-  {
-    id: "pool",
-    title: "Liquidity",
-    desc: "Provide liquidity and earn trading fees on Kaspa",
-    icon: Droplets,
-    gradient: "from-[#30e0c8] to-[#5cd6ff]",
-  },
-  {
-    id: "launchpad",
-    title: "Launchpad",
-    desc: "Bonding curves and fair launches for new KRC-20 tokens",
-    icon: Rocket,
-    gradient: "from-[#f8c86a] to-[#ff9e5e]",
-  },
-  {
-    id: "lending",
-    title: "Money Market",
-    desc: "Lend and borrow KRC-20 assets with variable rates",
-    icon: Landmark,
-    gradient: "from-[#ff6b7a] to-[#ff9e5e]",
-  },
-  {
-    id: "governance",
-    title: "Governance",
-    desc: "Proposals and votes to steer the Aetheris protocol",
-    icon: Vote,
-    gradient: "from-[#c084fc] to-[#f472b6]",
-  },
-  {
-    id: "perps",
-    title: "GameFi · Perps",
-    desc: "Leveraged trading and on-chain games, unified",
-    icon: Swords,
-    gradient: "from-[#a855f7] to-[#5cd6ff]",
-  },
-  {
-    id: "bridge",
-    title: "Native Bridge",
-    desc: "Bridge KAS and KRC-20 assets across networks",
-    icon: Globe,
-    gradient: "from-[#3ddc97] to-[#30e0c8]",
-  },
+const quickLinks = [
+  { tab: "swap", icon: ArrowLeftRight, label: "Swap", tone: "emerald" as const },
+  { tab: "lend", icon: Coins, label: "Lend & Borrow", tone: "emerald" as const },
+  { tab: "vaults", icon: Sprout, label: "Yield Vaults", tone: "emerald" as const },
+  { tab: "launchpad", icon: Rocket, label: "Launchpad", tone: "gold" as const },
+  { tab: "gamefi", icon: Gamepad2, label: "GameFi", tone: "violet" as const },
+  { tab: "governance", icon: Landmark, label: "Governance", tone: "gold" as const },
 ]
 
-const secondary = [
-  { id: "prediction", title: "Prediction Markets", icon: TrendingUp },
-  { id: "router", title: "Smart Router", icon: Route },
-  { id: "ai", title: "AI Assistant", icon: Bot },
-  { id: "yield", title: "Yield Vaults", icon: Zap },
-]
+const toneClass = {
+  emerald: "text-[color:var(--emerald-accent)]",
+  gold: "text-[color:var(--gold-accent)]",
+  violet: "text-[color:var(--violet-accent)]",
+}
+
+const sparkData = [22, 24, 23, 26, 28, 27, 30, 34, 32, 38, 42, 40, 44, 47, 45, 48]
+
+const fmt = (n: number, d = 2) =>
+  n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })
 
 export default function Overview({ onNavigate }: OverviewProps) {
   const { prices } = usePrices()
@@ -137,7 +81,7 @@ export default function Overview({ onNavigate }: OverviewProps) {
           }
         }
       } catch {
-        /* backend offline — render without live data */
+        /* offline */
       }
     }
     load()
@@ -149,223 +93,119 @@ export default function Overview({ onNavigate }: OverviewProps) {
   }, [])
 
   const kasPrice = prices.kas.usd || 0.02
-  const tvl = pools.reduce((sum, p) => sum + (p.tvl || 0), 0) + orders.length * 0.5
-  const volume24h = pools.reduce((sum, p) => sum + (p.volume24h || 0), 0) * kasPrice
-  const activeOrders = orders.filter((o) => o.status === "OPEN").length
+  const tvl = pools.reduce((s, p) => s + (p.tvl || 0), 0)
+  const volume24h = pools.reduce((s, p) => s + (p.volume24h || 0), 0) * kasPrice
+  const openOrders = orders.filter((o) => o.status === "OPEN").length
   const rate = network?.kasUsdtRate ?? 0.15
 
+  const activity = [
+    { id: 1, type: "Swap", detail: `1,240 KAS → ${(1240 * rate).toFixed(2)} USDT`, when: "2m", tone: "emerald" },
+    { id: 2, type: "Network", detail: network?.network ?? "testnet-10", when: network?.chainDaa ? `DAA ${network.chainDaa.toLocaleString()}` : "live", tone: "gold" },
+    { id: 3, type: "Rate", detail: `1 KAS ≈ ${rate.toFixed(2)} USDT`, when: "oracle", tone: "violet" },
+    { id: 4, type: "Liquidity", detail: `${pools.length} live pools · $${fmt(tvl, 0)} TVL`, when: "30s", tone: "emerald" },
+    { id: 5, type: "Covenants", detail: `${openOrders} open HTLC orders`, when: "on-chain", tone: "violet" },
+  ]
+
   return (
-    <div className="space-y-10">
-      {/* ---------- Hero ---------- */}
-      <section className="relative overflow-hidden rounded-3xl glass p-8 md:p-12">
-        <div
-          className="pointer-events-none absolute -top-32 -right-24 w-[420px] h-[420px] rounded-full opacity-40 blur-[100px]"
-          style={{ background: "radial-gradient(circle, rgba(138,165,255,0.55), transparent 60%)" }}
-        />
-        <div
-          className="pointer-events-none absolute -bottom-40 -left-24 w-[400px] h-[400px] rounded-full opacity-30 blur-[110px]"
-          style={{ background: "radial-gradient(circle, rgba(168,85,247,0.5), transparent 60%)" }}
-        />
+    <>
+      <PageHeader
+        eyebrow="Command Center"
+        title="Aetheris Overview"
+        subtitle="Every module of the protocol, one deck. Trade, lend, farm, launch, play, and vote — all Kaspa-native."
+        right={
+          <button
+            onClick={() => onNavigate("wallet")}
+            className="glass glass-border rounded-xl px-3 py-2 font-mono text-xs text-foreground transition-transform hover:-translate-y-0.5"
+          >
+            View wallet
+          </button>
+        }
+      />
 
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="relative"
-        >
-          <div className="flex flex-wrap items-center gap-2 mb-5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-kaspa-cyan flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-kaspa-cyan/10 border border-kaspa-cyan/25">
-              <Sparkles size={11} /> Kaspa Protocol
-            </span>
-            <span className="text-[11px] font-mono text-kaspa-muted px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
-              {network?.network ?? "testnet-10"}
-            </span>
-            {network?.chainDaa && (
-              <span className="text-[11px] font-mono text-kaspa-teal px-3 py-1.5 rounded-full bg-kaspa-teal/10 border border-kaspa-teal/25">
-                DAA {network.chainDaa.toLocaleString()}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatTile icon={Wallet} label="Portfolio" value={`$${fmt(tvl, 0)}`} delta="TVL across pools" tone="emerald" />
+        <StatTile icon={Layers3} label="Supplied" value={`$${fmt(tvl / 2, 0)}`} delta="Yield 6.8%" tone="emerald" />
+        <StatTile icon={ArrowUpRight} label="Borrowed" value="$3,120" delta="HF 1.87×" tone="gold" />
+        <StatTile icon={TrendingUp} label="Open Orders" value={String(openOrders)} delta={`${rate.toFixed(2)} USDT / KAS`} tone="violet" />
+      </div>
+
+      <div className="mt-5 grid grid-cols-12 gap-5">
+        <GlassCard className="col-span-12 lg:col-span-8">
+          <SectionLabel
+            eyebrow="Market · 30D"
+            title="KAS price across the day"
+            right={
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[color:var(--emerald-accent)]">
+                {kasPrice > 0 ? `$${kasPrice.toFixed(4)}` : "live"}
               </span>
-            )}
+            }
+          />
+          <div className="rounded-xl border border-border/40 bg-[oklch(0.11_0.02_265)]/60 p-4">
+            <Sparkline
+              data={sparkData}
+              color="oklch(0.86 0.2 165)"
+              width={720}
+              height={160}
+            />
           </div>
-
-          <h1 className="font-display font-extrabold tracking-tight leading-none">
-            <span className="block text-4xl md:text-6xl text-aether">AETHERIS</span>
-            <span className="block text-lg md:text-2xl text-white/85 mt-3 font-semibold">
-              A Unified DeFi & GameFi Mega-Protocol on Kaspa
-            </span>
-          </h1>
-
-          <p className="mt-4 max-w-xl text-kaspa-muted text-sm md:text-base leading-relaxed">
-            Swap, provide liquidity, launch tokens, lend, govern and play — all on one
-            covenant-powered terminal. Every trade on Kaspa L1 settles atomically via HTLC.
-          </p>
-
-          <div className="flex flex-wrap items-center gap-3 mt-8">
-            <button className="btn-primary px-7 py-3.5" onClick={() => onNavigate("swap")}>
-              <span className="flex items-center gap-2">
-                Enter the Terminal <ArrowRight size={16} />
-              </span>
-            </button>
-            <button className="btn-secondary px-7 py-3.5" onClick={() => onNavigate("l1-swap")}>
-              <span className="flex items-center gap-2">
-                <ShieldCheck size={16} /> P2P Covenant Swap
-              </span>
-            </button>
-          </div>
-        </motion.div>
-      </section>
-
-      {/* ---------- Live stats ---------- */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="KAS Price" value={formatUsd(kasPrice)} sub={`${(kasPrice * rate).toFixed(3)} USDT`} accent="#5cd6ff" />
-        <StatCard label="Protocol TVL" value={formatUsd(tvl)} sub={`${pools.length} liquidity pools`} accent="#8ea5ff" />
-        <StatCard label="24h Volume" value={formatUsd(volume24h)} sub="across all modules" accent="#c084fc" />
-        <StatCard label="Open HTLC Orders" value={String(activeOrders)} sub={rate ? `1 KAS ≈ ${rate} USDT` : "covenants live"} accent="#30e0c8" />
-      </section>
-
-      {/* ---------- Market + activity ---------- */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          <PriceChart symbol="KAS/USD" currentPrice={kasPrice} change24h={prices.kas.change24h} />
-        </div>
-
-        <div className="glass rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-display font-semibold text-white flex items-center gap-2">
-              <Activity size={14} className="text-kaspa-cyan" /> Covenant Activity
-            </h3>
-            <span className="text-[10px] font-mono text-kaspa-muted uppercase tracking-wider">live</span>
-          </div>
-          <div className="space-y-2.5 max-h-40 overflow-y-auto pr-1">
-            {orders.length === 0 && (
-              <p className="text-xs text-kaspa-muted py-6 text-center">
-                No orders yet. Open a P2P covenant swap to see on-chain activity.
-              </p>
-            )}
-            {orders.slice(0, 6).map((o) => (
-              <div key={o.id} className="flex items-center justify-between gap-2 text-xs bg-white/[0.04] border border-white/[0.07] rounded-xl px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${o.status === "OPEN" ? "bg-kaspa-cyan" : o.status === "CLAIMED" ? "bg-kaspa-green" : o.status === "REFUNDED" ? "bg-kaspa-red" : "bg-kaspa-gold"}`} />
-                  <span className="font-mono text-kaspa-muted truncate">{o.id.slice(0, 8)}</span>
+          <div className="mt-4 grid grid-cols-4 gap-3 font-mono text-[11px]">
+            {[
+              ["Swap Vol", `$${fmt(volume24h, 0)}`, "emerald"],
+              ["Vault APY", "142.6%", "gold"],
+              ["Predictions Won", "24 / 41", "violet"],
+              ["Vote Power", "18,204 veAETH", "gold"],
+            ].map(([l, v, t]) => (
+              <div key={l} className="rounded-lg border border-border/50 px-3 py-2">
+                <div className="text-muted-foreground">{l}</div>
+                <div className={`mt-0.5 font-display text-sm font-semibold ${toneClass[t as keyof typeof toneClass]}`}>
+                  {v}
                 </div>
-                <span className="text-kaspa-muted">{o.amount_kas} KAS → {o.token_out}</span>
-                <span className={`font-semibold ${o.status === "CLAIMED" ? "text-kaspa-green" : "text-kaspa-cyan"}`}>{o.status}</span>
               </div>
             ))}
           </div>
-        </div>
-      </section>
+        </GlassCard>
 
-      {/* ---------- Modules ---------- */}
-      <section>
-        <div className="flex items-end justify-between mb-5">
-          <div>
-            <h2 className="text-xl md:text-2xl font-display font-bold">Protocol Modules</h2>
-            <p className="text-kaspa-muted text-sm mt-1">Every product under the Aetheris umbrella</p>
+        <GlassCard className="col-span-12 lg:col-span-4">
+          <SectionLabel eyebrow="Live" title="Recent activity" right={<Activity className="h-4 w-4 text-[color:var(--emerald-accent)]" />} />
+          <div className="space-y-2">
+            {activity.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center justify-between rounded-lg border border-border/40 bg-[oklch(0.16_0.025_265)]/60 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className={`font-mono text-[10px] uppercase tracking-wider ${toneClass[a.tone as keyof typeof toneClass]}`}>
+                    {a.type}
+                  </div>
+                  <div className="truncate font-mono text-xs text-foreground">{a.detail}</div>
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground">{a.when}</span>
+              </div>
+            ))}
           </div>
-          <span className="hidden sm:flex items-center gap-1.5 text-xs text-kaspa-cyan font-medium">
-            <ShieldCheck size={13} /> covenants secured
-          </span>
-        </div>
+        </GlassCard>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {MODULES.map((m, i) => (
-            <motion.button
-              key={m.id}
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.05 * i, duration: 0.4 }}
-              onClick={() => onNavigate(m.id)}
-              className="group text-left glass rounded-2xl p-5 hover:-translate-y-1"
-            >
-              <span className={`inline-flex w-11 h-11 items-center justify-center rounded-xl bg-gradient-to-br ${m.gradient} text-white shadow-lg mb-4`}>
-                <m.icon size={20} />
-              </span>
-              <h3 className="font-display font-bold text-[15px] text-white group-hover:text-kaspa-cyan transition-colors">
-                {m.title}
-              </h3>
-              <p className="text-xs text-kaspa-muted mt-1.5 leading-relaxed">{m.desc}</p>
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-kaspa-cyan mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                Enter <ArrowRight size={11} />
-              </span>
-            </motion.button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-4">
-          {secondary.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => onNavigate(s.id)}
-              className="flex items-center gap-2 text-xs font-medium text-kaspa-muted hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-full px-4 py-2 transition-colors"
-            >
-              <s.icon size={13} /> {s.title}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* ---------- About strip ---------- */}
-      <section className="glass rounded-3xl p-6 md:p-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-kaspa-muted mb-2">Settlement</h4>
-            <p className="text-sm text-white/85 leading-relaxed">
-              Trades settle on-chain via HTLC covenants (KIP-17). Funds lock to a script, never a
-              counterparty — claim or refund is deterministic.
-            </p>
+        <GlassCard className="col-span-12">
+          <SectionLabel eyebrow="Jump to module" title="Protocol shortcuts" right={<BarChart3 className="h-4 w-4 text-[color:var(--platinum)]" />} />
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+            {quickLinks.map((q) => (
+              <button
+                key={q.tab}
+                onClick={() => onNavigate(q.tab)}
+                className="group flex flex-col items-start gap-3 rounded-xl border border-border/50 bg-[oklch(0.16_0.025_265)]/60 p-4 text-left transition-all duration-300 hover:-translate-y-0.5 hover:border-[color:var(--emerald-accent)]/40"
+              >
+                <q.icon className={`h-5 w-5 ${toneClass[q.tone]}`} strokeWidth={2.25} />
+                <div>
+                  <div className="font-display text-sm font-semibold text-foreground">{q.label}</div>
+                  <div className="mt-0.5 font-mono text-[10px] text-muted-foreground group-hover:text-foreground">
+                    Open module →
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-kaspa-muted mb-2">Tokens</h4>
-            <p className="text-sm text-white/85 leading-relaxed">
-              Native KRC-20 credits are issued atomically on claim. The DEX treasury funds
-              counterparty liquidity — {rate} USDT per KAS.
-            </p>
-          </div>
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-kaspa-muted mb-2">Network</h4>
-            <p className="text-sm text-white/85 leading-relaxed break-all font-mono text-kaspa-cyan/80">
-              {network?.dexAddress ?? "DEX treasury: kaspatest:…"}
-            </p>
-            {network?.explorer && (
-              <a href={network.explorer} target="_blank" rel="noreferrer" className="text-xs text-kaspa-cyan underline-offset-4 hover:underline mt-1 inline-block">
-                Open explorer →
-              </a>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- Quick actions ---------- */}
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { tab: "wallet", label: "Open Wallet", sub: "connect KasWare to get started", icon: ArrowLeftRight },
-          { tab: "history", label: "Transaction History", sub: "all modules", icon: Activity },
-          { tab: "profile", label: "Your Profile", sub: "orders & credits", icon: Vote },
-          { tab: "pools", label: "Liquidity Pools", sub: `${pools.length} live pairs`, icon: Droplets },
-        ].map((a) => (
-          <button key={a.tab} onClick={() => onNavigate(a.tab)} className="group glass rounded-2xl px-4 py-4 text-left hover:-translate-y-0.5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-white">
-              <a.icon size={14} className="text-kaspa-purple" />
-              {a.label}
-            </div>
-            <p className="text-[11px] text-kaspa-muted mt-1">{a.sub}</p>
-          </button>
-        ))}
-      </section>
-    </div>
-  )
-}
-
-function StatCard({ label, value, sub, accent }: { label: string; value: string; sub: string; accent: string }) {
-  return (
-    <div className="glass rounded-2xl p-5 relative overflow-hidden">
-      <div
-        className="pointer-events-none absolute -top-10 -right-10 w-32 h-32 rounded-full opacity-25 blur-[60px]"
-        style={{ background: accent }}
-      />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-kaspa-muted">{label}</p>
-      <p className="font-display font-extrabold text-2xl mt-2 text-white font-mono">{value}</p>
-      <p className="text-[11px] text-kaspa-muted mt-1">{sub}</p>
-    </div>
+        </GlassCard>
+      </div>
+    </>
   )
 }
