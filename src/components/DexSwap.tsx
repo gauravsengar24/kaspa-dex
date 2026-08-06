@@ -3,41 +3,37 @@ import { motion, AnimatePresence } from "framer-motion"
 import { ArrowDownUp, Settings, ChevronDown, RefreshCw, ExternalLink } from "lucide-react"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { formatKaspa } from "../utils/kaspa"
-import { NETWORK, TOKENS, KASPA_TOKEN, SLIPPAGE_OPTIONS, DEFAULT_SLIPPAGE, SWAP_FEE_PERCENT } from "../utils/constants"
+import { KASPA_TOKEN, SLIPPAGE_OPTIONS, DEFAULT_SLIPPAGE } from "../utils/constants"
 import type { TokenInfo } from "../types"
-
-interface PoolToken {
-  ticker: string
-  type: "pool" | "bonding" | "amm"
-  price: number
-  liquidity: number
-  icon: string
-  poolId?: string
-}
-
-interface AmmPoolData {
-  [poolId: string]: {
-    type: string
-    token0: string
-    token1: string
-    reserve0: number
-    reserve1: number
-    fee: number
-    price: number
-    k: number
-  }
-}
+import {
+  discoverTokens,
+  getToken,
+  quoteBuy,
+  quoteSell,
+  walletBridge,
+  buyOnCurve,
+  sellOnCurve,
+  swapKasForToken,
+  swapTokenForKas,
+  type Kcc20Token,
+  type Kcc20Quote,
+} from "../utils/kcc20"
 
 const AMM_ICONS: Record<string, string> = {
   USDT: "₮", NACHO: "🌮", KASPER: "💎", PEPEK: "🐸",
   KISHU: "🐶", GHOST: "👻", KASPY: "🐕",
 }
 
+interface KccRoute {
+  token: Kcc20Token
+  graduated: boolean
+}
+
 export default function DexSwap() {
-  const { connected, connect, address, balanceRaw, balanceFormatted, connecting } = useKaspaWallet()
+  const { connected, connect, address, balanceRaw, connecting } = useKaspaWallet()
 
   const [fromToken, setFromToken] = useState<TokenInfo>(KASPA_TOKEN)
-  const [toToken, setToToken] = useState<TokenInfo>(TOKENS[1])
+  const [toToken, setToToken] = useState<TokenInfo>(KASPA_TOKEN)
   const [fromAmount, setFromAmount] = useState("")
   const [toAmount, setToAmount] = useState("")
 
@@ -47,10 +43,12 @@ export default function DexSwap() {
   const [error, setError] = useState<string | null>(null)
   const [txId, setTxId] = useState<string | null>(null)
 
-  const [poolTokens, setPoolTokens] = useState<PoolToken[]>([])
-  const [ammPools, setAmmPools] = useState<AmmPoolData>({})
+  const [kcc20Tokens, setKcc20Tokens] = useState<Kcc20Token[]>([])
   const [loadingTokens, setLoadingTokens] = useState(true)
   const [selectingToken, setSelectingToken] = useState<"from" | "to" | null>(null)
+  const [kccQuote, setKccQuote] = useState<Kcc20Quote | null>(null)
+  const [quoteToken, setQuoteToken] = useState<string>("")
+  const [quoteAmt, setQuoteAmt] = useState("")
 
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
@@ -58,152 +56,95 @@ export default function DexSwap() {
   const fetchTokens = useCallback(async () => {
     setLoadingTokens(true)
     try {
-      const [poolRes, bondingRes, ammRes] = await Promise.all([
-        fetch(`${NETWORK.backend}/api/pool/list`),
-        fetch(`${NETWORK.backend}/api/bonding/tokens`),
-        fetch(`${NETWORK.backend}/api/amm/pools`),
-      ])
-      const all: PoolToken[] = []
-      if (poolRes.ok) {
-        const data = await poolRes.json()
-        for (const p of data.pools || []) {
-          all.push({ ticker: p.ticker, type: "pool", price: p.price, liquidity: p.kasReserve, icon: "🪙" })
-        }
-      }
-      if (bondingRes.ok) {
-        const data = await bondingRes.json()
-        for (const t of data || []) {
-          if (!t.graduated) {
-            all.push({ ticker: t.ticker, type: "bonding", price: t.currentPrice, liquidity: t.kasRaised, icon: t.icon || "🪙" })
-          }
-        }
-      }
-      const ammData: AmmPoolData = {}
-      if (ammRes.ok) {
-        const data = await ammRes.json()
-        for (const [pid, pool] of Object.entries(data) as [string, any][]) {
-          if (pool.type !== "CPMM") continue
-          ammData[pid] = pool
-          for (const tok of [pool.token0, pool.token1]) {
-            if (tok === "KAS") continue
-            if (all.some(a => a.ticker === tok)) continue
-            all.push({
-              ticker: tok,
-              type: "amm",
-              price: pool.token0 === "KAS" ? 1 / pool.price : pool.price,
-              liquidity: pool.token0 === "KAS" ? pool.reserve0 : pool.reserve1,
-              icon: AMM_ICONS[tok] || "🪙",
-              poolId: pid,
-            })
-          }
-        }
-      }
-      if (mountedRef.current) {
-        setPoolTokens(all)
-        setAmmPools(ammData)
-      }
-    } catch { /* ignore */ }
+      const tokens = await discoverTokens()
+      if (mountedRef.current) setKcc20Tokens(tokens)
+    } catch { /* keep existing */ }
     if (mountedRef.current) setLoadingTokens(false)
   }, [])
 
   useEffect(() => { fetchTokens() }, [fetchTokens])
 
-  const routeInfo = useMemo(() => {
-    if (!toToken || toToken.ticker === fromToken.ticker) return null
-    if (toToken.ticker === "KAS") return { type: "sell" as const, ticker: fromToken.ticker, price: 0, liquidity: 0, poolId: undefined as string | undefined }
-    const pt = poolTokens.find(t => t.ticker === toToken.ticker)
-    if (!pt) return null
-    return { type: pt.type as "pool" | "bonding" | "amm", ticker: pt.ticker, price: pt.price, liquidity: pt.liquidity, poolId: pt.poolId }
-  }, [toToken, fromToken, poolTokens])
-
-  const estimatedOutput = useMemo(() => {
-    if (!fromAmount || !routeInfo || Number(fromAmount) <= 0) return null
-    const fee = Number(fromAmount) * SWAP_FEE_PERCENT / 100
-    const effectiveIn = Number(fromAmount) - fee
-    if (routeInfo.type === "amm") {
-      const pid = routeInfo.poolId
-      if (!pid || !ammPools[pid]) return null
-      const pool = ammPools[pid]
-      const isKasIn = pool.token0 === "KAS"
-      const reserveIn = isKasIn ? pool.reserve0 : pool.reserve1
-      const reserveOut = isKasIn ? pool.reserve1 : pool.reserve0
-      const numerator = effectiveIn * reserveOut
-      const denominator = reserveIn + effectiveIn
-      return numerator / denominator
-    }
-    if (routeInfo.type === "pool") {
-      const price = routeInfo.price
-      return effectiveIn / price
-    }
-    if (routeInfo.type === "bonding") {
-      return effectiveIn / routeInfo.price
+  const route = useMemo((): KccRoute | null => {
+    if (toToken.ticker === "KAS" || fromToken.ticker === "KAS") {
+      const targetTicker = toToken.ticker === "KAS" ? fromToken.ticker : toToken.ticker
+      const token = kcc20Tokens.find(t => t.tick === targetTicker)
+      if (!token) return null
+      return { token, graduated: token.graduated }
     }
     return null
-  }, [fromAmount, routeInfo, ammPools])
+  }, [toToken, fromToken, kcc20Tokens])
+
+  const sellMode = fromToken.ticker !== "KAS"
+
+  // Live KCC-20 quote (kron-sdk quoteCpBuy / quotePoolV3Buy)
+  useEffect(() => {
+    if (!route || !fromAmount || Number(fromAmount) <= 0) {
+      setKccQuote(null); setQuoteToken(""); setQuoteAmt(""); return
+    }
+    let cancelled = false
+    ;(async () => {
+      const amt = Number(fromAmount)
+      const q = sellMode
+        ? await quoteSell(route.token.tick, amt)
+        : await quoteBuy(route.token.tick, amt)
+      if (cancelled || !q) return
+      setKccQuote(q)
+      setQuoteToken(route.token.tick)
+      setQuoteAmt(fromAmount)
+    })()
+    return () => { cancelled = true }
+  }, [route, fromAmount, sellMode])
+
+  const estimatedOutput = useMemo(() => {
+    if (route && kccQuote && quoteToken === route.token.tick && quoteAmt === fromAmount) {
+      return Number(kccQuote.tokenOut)
+    }
+    return null
+  }, [route, kccQuote, quoteToken, quoteAmt, fromAmount])
 
   const priceImpact = useMemo(() => {
-    if (!fromAmount || !estimatedOutput || !routeInfo) return 0
-    return Math.min(5, (Number(fromAmount) / (Number(fromAmount) + 100)) * 100)
-  }, [fromAmount, estimatedOutput, routeInfo])
+    if (!fromAmount || !estimatedOutput || !route) return 0
+    return Math.min(5, (Number(fromAmount) / (Number(fromAmount) + 1000)) * 100)
+  }, [fromAmount, estimatedOutput, route])
 
   const minReceived = useMemo(() => {
-    if (!estimatedOutput) return null
+    if (estimatedOutput == null) return null
     return estimatedOutput * (1 - slippage / 100)
   }, [estimatedOutput, slippage])
 
   const insufficientBalance = useMemo(() => {
     if (!connected || !fromAmount) return false
+    if (sellMode) return false
     return Number(fromAmount) > balanceRaw
-  }, [connected, fromAmount, balanceRaw])
+  }, [connected, fromAmount, balanceRaw, sellMode])
 
   const handleSwap = useCallback(async () => {
     if (!connected) { await connect(); return }
-    if (!fromAmount || !routeInfo || Number(fromAmount) <= 0 || !window.kasware) return
+    if (!fromAmount || !route || Number(fromAmount) <= 0 || !window.kasware) return
 
     setSwapping(true)
     setError(null)
     setTxId(null)
 
     try {
-      if (routeInfo.ticker === "KAS") {
-        setSwapping(false)
-        setFromAmount("")
-        fetchTokens()
-        return
+      const bridge = walletBridge()
+      if (!bridge) throw new Error("KasWare wallet bridge unavailable")
+
+      let txid: string
+      if (sellMode) {
+        const r = route.graduated
+          ? await swapTokenForKas(route.token.tick, Number(fromAmount), bridge)
+          : await sellOnCurve(route.token.tick, Number(fromAmount), bridge)
+        txid = r.txid
+      } else {
+        const r = route.graduated
+          ? await swapKasForToken(route.token.tick, Number(fromAmount), bridge)
+          : await buyOnCurve(route.token.tick, Number(fromAmount), bridge)
+        txid = r.txid
       }
 
-      let result: any
-      if (routeInfo.type === "amm") {
-        const pid = routeInfo.poolId
-        if (!pid) throw new Error("No AMM pool selected")
-        const res = await fetch(`${NETWORK.backend}/api/amm/swap`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pool_id: pid, token_in: "KAS", amount_in: Number(fromAmount) }),
-        })
-        if (!res.ok) throw new Error(await res.text())
-        result = await res.json()
-        setToAmount(result.amount_out.toFixed(6))
-      } else if (routeInfo.type === "pool") {
-        const res = await fetch(`${NETWORK.backend}/api/pool/swap/buy`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticker: routeInfo.ticker, kas_amount: Number(fromAmount), user: address }),
-        })
-        if (!res.ok) throw new Error(await res.text())
-        result = await res.json()
-        setToAmount(result.tokens_out.toFixed(6))
-      } else if (routeInfo.type === "bonding") {
-        const res = await fetch(`${NETWORK.backend}/api/bonding/buy`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticker: routeInfo.ticker, kas_amount: Number(fromAmount), buyer: address }),
-        })
-        if (!res.ok) throw new Error(await res.text())
-        result = await res.json()
-        setToAmount(result.tokens_bought.toFixed(6))
-      }
-
+      setTxId(txid)
+      setToAmount(estimatedOutput?.toFixed(6) ?? "")
       setFromAmount("")
       fetchTokens()
     } catch (err) {
@@ -211,23 +152,17 @@ export default function DexSwap() {
     } finally {
       setSwapping(false)
     }
-  }, [connected, connect, fromAmount, routeInfo, address, fetchTokens])
+  }, [connected, connect, fromAmount, route, sellMode, estimatedOutput, fetchTokens])
 
   const routeLabel = useMemo(() => {
-    if (!routeInfo) return ""
-    if (routeInfo.type === "amm") return "AMM CPMM"
-    if (routeInfo.type === "pool") return "Graduated AMM"
-    if (routeInfo.type === "bonding") return "Bonding Curve"
-    return ""
-  }, [routeInfo])
+    if (!route) return ""
+    return route.graduated ? "KCC-20 AMM (KRON pool)" : "KCC-20 Bonding Curve"
+  }, [route])
 
   const routeColor = useMemo(() => {
-    if (!routeInfo) return ""
-    if (routeInfo.type === "amm") return "text-kaspa-cyan"
-    if (routeInfo.type === "pool") return "text-kaspa-purple"
-    if (routeInfo.type === "bonding") return "text-kaspa-green"
-    return ""
-  }, [routeInfo])
+    if (!route) return ""
+    return route.graduated ? "text-kaspa-purple" : "text-kaspa-green"
+  }, [route])
 
   return (
     <div className="max-w-md mx-auto">
@@ -236,7 +171,7 @@ export default function DexSwap() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-display font-bold">Swap</h2>
-              <p className="text-xs text-kaspa-muted mt-0.5">Built on Kaspa mainnet</p>
+              <p className="text-xs text-kaspa-muted mt-0.5">KCC-20 · on-chain L1 (KRON covenants)</p>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={fetchTokens} className="btn-secondary p-2" title="Refresh">
@@ -278,7 +213,7 @@ export default function DexSwap() {
         <div className="p-5 space-y-2">
           <div className={`glass rounded-xl p-4 ${insufficientBalance ? "border border-kaspa-red/50" : ""}`}>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-kaspa-muted">You sell</span>
+              <span className="text-sm text-kaspa-muted">{sellMode ? "You sell" : "You sell"}</span>
               <span className="text-xs text-kaspa-muted">
                 Balance: {connected ? formatKaspa(balanceRaw) : "—"} {fromToken.ticker}
               </span>
@@ -309,7 +244,7 @@ export default function DexSwap() {
             <motion.button
               onClick={() => {
                 const tmp = fromToken; setFromToken(toToken); setToToken(tmp)
-                setFromAmount(""); setToAmount(""); setError(null)
+                setFromAmount(""); setToAmount(""); setError(null); setKccQuote(null)
               }}
               className="w-10 h-10 rounded-xl glass-strong border-4 border-kaspa-dark flex items-center justify-center text-kaspa-pink hover:text-white transition-colors"
             >
@@ -327,7 +262,7 @@ export default function DexSwap() {
             <div className="flex items-center gap-3">
               <input
                 type="text"
-                value={toAmount || (estimatedOutput !== null ? estimatedOutput.toFixed(6) : "")}
+                value={toAmount || (estimatedOutput != null ? estimatedOutput.toFixed(6) : "")}
                 readOnly
                 placeholder="0.0"
                 className="flex-1 bg-transparent border-0 p-0 text-2xl font-bold outline-none text-kaspa-green"
@@ -343,7 +278,7 @@ export default function DexSwap() {
             </div>
           </div>
 
-          {routeInfo && estimatedOutput !== null && fromAmount && (
+          {route && estimatedOutput != null && fromAmount && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
@@ -351,46 +286,30 @@ export default function DexSwap() {
             >
               <div className="flex justify-between">
                 <span className="text-kaspa-muted">Rate</span>
-                <span>1 KAS = {routeInfo.price ? (1 / routeInfo.price).toFixed(6) : "—"} {routeInfo.ticker}</span>
+                <span>{kccQuote?.price ? (1 / kccQuote.price).toFixed(6) : "—"} {route.token.tick}</span>
               </div>
+              {minReceived != null && (
+                <div className="flex justify-between">
+                  <span className="text-kaspa-muted">Min. received</span>
+                  <span>{minReceived.toFixed(6)} {route.token.tick}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-kaspa-muted">Price impact</span>
                 <span className={priceImpact > 1 ? "text-kaspa-red" : priceImpact > 0.5 ? "text-kaspa-gold" : "text-kaspa-green"}>
                   {priceImpact.toFixed(2)}%
                 </span>
               </div>
-              {minReceived !== null && (
-                <div className="flex justify-between">
-                  <span className="text-kaspa-muted">Min. received</span>
-                  <span>{minReceived.toFixed(6)} {routeInfo.ticker}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-kaspa-muted">Fee</span>
-                <span>{(Number(fromAmount) * SWAP_FEE_PERCENT / 100).toFixed(6)} KAS</span>
-              </div>
               <div className="flex justify-between">
                 <span className="text-kaspa-muted">Route</span>
                 <span className={routeColor}>{routeLabel}</span>
               </div>
-              {routeInfo.type === "amm" && (
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-kaspa-muted">Pool</span>
-                  <span className="text-kaspa-muted font-mono">{routeInfo.poolId}</span>
-                </div>
-              )}
-              {routeInfo.type === "pool" && (
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-kaspa-muted">Liquidity</span>
-                  <span className="text-kaspa-muted">{routeInfo.liquidity?.toFixed(2) || "0"} KAS</span>
-                </div>
-              )}
             </motion.div>
           )}
 
-          {!routeInfo && fromToken.ticker !== toToken.ticker && (
+          {!route && fromToken.ticker !== toToken.ticker && (
             <div className="text-xs text-kaspa-muted text-center py-2">
-              No trading pair available for {fromToken.ticker} → {toToken.ticker}
+              Only KAS ↔ KCC-20 pairs are supported on-chain. Select a KRON token.
             </div>
           )}
 
@@ -409,14 +328,15 @@ export default function DexSwap() {
 
           <button
             onClick={handleSwap}
-            disabled={!fromAmount || Number(fromAmount) <= 0 || insufficientBalance || swapping || !routeInfo}
+            disabled={!fromAmount || Number(fromAmount) <= 0 || insufficientBalance || swapping || !route}
             className="btn-primary w-full mt-2"
           >
             {swapping ? "Swapping..." : connecting ? "Connecting..." : !connected ? "Connect KasWare"
               : insufficientBalance ? "Insufficient KAS"
               : !fromAmount ? "Enter amount"
-              : !routeInfo ? "No route"
-              : `Swap KAS → ${routeInfo?.ticker || "?"}`}
+              : !route ? "Select token"
+              : sellMode ? `Swap ${route.token.tick} → KAS`
+              : `Swap KAS → ${route.token.tick}`}
           </button>
         </div>
       </div>
@@ -455,32 +375,40 @@ export default function DexSwap() {
                   </div>
                 </button>
                 <div className="border-t border-kaspa-border/30 my-2 pt-2">
-                  <p className="text-xs text-kaspa-muted mb-2">Available Tokens</p>
-                  {poolTokens.map(pt => (
-                    <button
-                      key={pt.ticker}
-                      onClick={() => {
-                        const t: TokenInfo = { ticker: pt.ticker, name: pt.ticker, decimals: 8, icon: pt.icon, isKrc20: true }
-                        if (selectingToken === "from") { setFromToken(t); if (toToken.ticker === pt.ticker) setToToken(fromToken) }
-                        else { setToToken(t); if (fromToken.ticker === pt.ticker) setFromToken(toToken) }
-                        setSelectingToken(null)
-                        setToAmount("")
-                      }}
-                      className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${
-                        (selectingToken === "from" ? fromToken : toToken).ticker === pt.ticker ? "bg-white/10" : "hover:bg-white/5"
-                      }`}
-                    >
-                      <span className="text-xl">{pt.icon}</span>
-                      <div className="text-left flex-1">
-                        <div className="font-medium">{pt.ticker}</div>
-                        <div className="text-xs text-kaspa-muted">
-                          {pt.type === "amm" ? "AMM CPMM" : pt.type === "pool" ? "Graduated AMM" : "Bonding Curve"} &middot; {pt.price.toFixed(6)} KAS
-                        </div>
-                      </div>
-                      {pt.type === "pool" && <span className="text-[10px] text-kaspa-green">Graduated</span>}
-                      {pt.type === "amm" && <span className="text-[10px] text-kaspa-cyan">CPMM</span>}
-                    </button>
-                  ))}
+                  <p className="text-xs text-kaspa-muted mb-2">KCC-20 Tokens (KRON indexer)</p>
+                  {loadingTokens ? (
+                    <div className="text-sm text-kaspa-muted text-center py-4">Loading...</div>
+                  ) : (
+                    kcc20Tokens.map(tok => {
+                      const icon = AMM_ICONS[tok.tick.toUpperCase()] || tok.toTokenInfo().icon || "🪙"
+                      return (
+                        <button
+                          key={tok.tick}
+                          onClick={() => {
+                            const t: TokenInfo = tok.toTokenInfo()
+                            if (selectingToken === "from") { setFromToken(t); if (toToken.ticker === tok.tick) setToToken(fromToken) }
+                            else { setToToken(t); if (fromToken.ticker === tok.tick) setFromToken(toToken) }
+                            setSelectingToken(null)
+                            setToAmount("")
+                            setKccQuote(null)
+                          }}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${
+                            (selectingToken === "from" ? fromToken : toToken).ticker === tok.tick ? "bg-white/10" : "hover:bg-white/5"
+                          }`}
+                        >
+                          <span className="text-xl">{icon}</span>
+                          <div className="text-left flex-1">
+                            <div className="font-medium">{tok.tick}</div>
+                            <div className="text-xs text-kaspa-muted">
+                              {tok.graduated ? "KRON AMM" : "Bonding Curve"} · {tok.decimals} dec
+                            </div>
+                          </div>
+                          {tok.graduated && <span className="text-[10px] text-kaspa-purple">Graduated</span>}
+                          {!tok.graduated && <span className="text-[10px] text-kaspa-green">Curve</span>}
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
               </div>
             </motion.div>

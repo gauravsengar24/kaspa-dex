@@ -4,6 +4,7 @@ import { Wallet, Copy, Check, ExternalLink, RefreshCw } from "lucide-react"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { formatAddress, formatKaspa, formatUsd } from "../utils/kaspa"
 import { NETWORK } from "../utils/constants"
+import { getBalances, type Kcc20Balance } from "../utils/kcc20"
 
 interface TokenBalance {
   ticker: string
@@ -13,12 +14,22 @@ interface TokenBalance {
 export default function WalletPage() {
   const { connected, address, balanceRaw, balanceFormatted, connect, connecting, disconnect, kaswareDetected, error } = useKaspaWallet()
   const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([])
+  const [kcc20Balances, setKcc20Balances] = useState<Kcc20Balance[]>([])
   const [loadingTokens, setLoadingTokens] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const fetchTokenBalances = useCallback(async () => {
     if (!address) return
     setLoadingTokens(true)
+
+    // KCC-20 on-chain balances via the KRON indexer (kron-sdk client).
+    try {
+      const kcc20 = await getBalances(address)
+      setKcc20Balances(kcc20)
+    } catch {
+      setKcc20Balances([])
+    }
+
     try {
       const resp = await fetch(`${NETWORK.backend}/api/token-balances/${address}`)
       if (resp.ok) {
@@ -120,15 +131,29 @@ export default function WalletPage() {
 
         {loadingTokens ? (
           <div className="text-sm text-kaspa-muted text-center py-4">Loading...</div>
-        ) : tokenBalances.length === 0 ? (
+        ) : tokenBalances.length === 0 && kcc20Balances.length === 0 ? (
           <div className="text-sm text-kaspa-muted text-center py-4">
-            No credited token balances yet.
-            <br />Swap KAS for USDT on the L1 Swap tab to get started.
+            No KCC-20 or credited token balances yet.
+            <br />Swap KAS for a token on the L1 Swap tab to get started.
           </div>
         ) : (
           <div className="space-y-3">
+            {kcc20Balances.slice(0, 8).map((tb) => (
+              <div key={tb.tick} className="glass rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-lg">
+                    {tb.tick === "USDT" ? "💵" : "🪙"}
+                  </div>
+                  <div>
+                    <p className="font-semibold">{tb.tick}</p>
+                    <p className="text-xs text-kaspa-muted">KCC-20 (on-chain)</p>
+                  </div>
+                </div>
+                <p className="text-xl font-bold">{tb.parsed.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })}</p>
+              </div>
+            ))}
             {tokenBalances.map((tb) => (
-              <div key={tb.ticker} className="glass rounded-xl p-4 flex items-center justify-between">
+              <div key={`${tb.ticker}-credited`} className="glass rounded-xl p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-lg">
                     {tb.ticker === "USDT" ? "💵" : "🪙"}

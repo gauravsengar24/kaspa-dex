@@ -4,6 +4,10 @@ import { defineConfig } from "vite"
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  assetsInclude: ["**/*.wasm"],
+  optimizeDeps: {
+    exclude: ["@kronsdk/kron-sdk/wasm"],
+  },
   build: {
     outDir: "dist",
   },

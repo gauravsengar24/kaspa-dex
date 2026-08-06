@@ -1,29 +1,29 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { TrendingUp, Rocket, Check, ExternalLink, RefreshCw } from "lucide-react"
+import { TrendingUp, RefreshCw, ExternalLink } from "lucide-react"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
-import { formatKaspa, formatAddress } from "../utils/kaspa"
-import { NETWORK, TOKENS, KASPA_TOKEN } from "../utils/constants"
+import {
+  discoverTokens,
+  getToken,
+  buyOnCurve,
+  walletBridge,
+  type Kcc20Token,
+} from "../utils/kcc20"
 
 interface BondingTokenInfo {
   ticker: string
   name: string
   icon: string
-  creator: string
-  supplySold: number
-  kasRaised: number
-  currentPrice: number
-  marketCapKas: number
+  price: number
+  priceChange: number
+  volume24h: number
   progressPct: number
-  graduated: boolean
-  graduatedAt: number | null
-  createdAt: number
-  totalSupply: number
   graduationThreshold: number
+  kasRaised: number
 }
 
 export default function BondingCurve() {
-  const { connected, connect, address, balanceRaw, balanceFormatted, connecting } = useKaspaWallet()
+  const { connected, connect, balanceFormatted, connecting } = useKaspaWallet()
   const [tokens, setTokens] = useState<BondingTokenInfo[]>([])
   const [selected, setSelected] = useState<BondingTokenInfo | null>(null)
   const [kasAmount, setKasAmount] = useState("")
@@ -32,123 +32,83 @@ export default function BondingCurve() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [txId, setTxId] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-  const [newTicker, setNewTicker] = useState("")
-  const [newName, setNewName] = useState("")
-  const [newIcon, setNewIcon] = useState("🪙")
+  const [kcc20ByTick, setKcc20ByTick] = useState<Map<string, Kcc20Token>>(new Map())
   const mountedRef = useRef(true)
-
-  const ICONS = ["🪙", "💎", "🚀", "🔥", "🌙", "⭐", "🐱", "🦊", "🐻", "🐂", "🌊", "⚡", "🎯", "🧠", "👑"]
 
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
 
-  const fetchTokens = useCallback(async (graduated?: boolean) => {
+  const fetchTokens = useCallback(async () => {
     setLoading(true)
     try {
-      const params = graduated !== undefined ? `?graduated=${graduated}` : ""
-      const res = await fetch(`${NETWORK.backend}/api/bonding/tokens${params}`)
-      if (res.ok) {
-        const data = await res.json()
-        if (mountedRef.current) setTokens(data)
+      const kcc20 = await discoverTokens()
+      const map = new Map<string, Kcc20Token>()
+      const rows: BondingTokenInfo[] = []
+      for (const t of kcc20) {
+        if (t.graduated) continue
+        map.set(t.tick.toLowerCase(), t)
+        const live = await getToken(t.tick).catch(() => null)
+        const gradKas = live?.cpState?.graduationKas ?? 0
+        const raised = live?.cpState?.realKas ? Number(live.cpState.realKas) / 100_000_000 : 0
+        rows.push({
+          ticker: t.tick,
+          name: t.name,
+          icon: t.toTokenInfo().icon || "🪙",
+          price: live?.price ?? 0,
+          priceChange: live?.change24h ?? 0,
+          volume24h: live?.volume24h ?? 0,
+          progressPct: gradKas > 0 ? Math.min(100, (raised / (gradKas / 100_000_000)) * 100) : 0,
+          graduationThreshold: gradKas > 0 ? Math.round(gradKas / 100_000_000) : 1000,
+          kasRaised: raised,
+        })
       }
-    } catch { /* ignore */ }
+      if (mountedRef.current) {
+        setTokens(rows)
+        setKcc20ByTick(map)
+      }
+    } catch { /* keep existing */ }
     if (mountedRef.current) setLoading(false)
   }, [])
 
-  useEffect(() => { fetchTokens(false) }, [fetchTokens])
+  useEffect(() => { fetchTokens() }, [fetchTokens])
 
-  const showError = (msg: string) => { setError(msg); setTimeout(() => { if (mountedRef.current) setError(null) }, 5000) }
-  const showSuccess = (msg: string) => { setSuccess(msg); setTimeout(() => { if (mountedRef.current) setSuccess(null) }, 5000) }
-
-  const handleCreate = useCallback(async () => {
-    if (!newTicker || !newName) { showError("Enter ticker and name"); return }
-    try {
-      const res = await fetch(`${NETWORK.backend}/api/bonding/create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: newTicker.toUpperCase(), name: newName, icon: newIcon, creator: address }),
-      })
-      if (res.ok) {
-        showSuccess(`Token ${newTicker.toUpperCase()} created!`)
-        setShowCreate(false)
-        setNewTicker("")
-        setNewName("")
-        fetchTokens(false)
-      } else {
-        const err = await res.text()
-        showError(err)
-      }
-    } catch (err) {
-      showError(err instanceof Error ? err.message : "Create failed")
-    }
-  }, [newTicker, newName, newIcon, address, fetchTokens])
+  const showError = (msg: string) => { setError(msg); setTimeout(() => { if (mountedRef.current) setError(null) }, 8000) }
+  const showSuccess = (msg: string) => { setSuccess(msg); setTimeout(() => { if (mountedRef.current) setSuccess(null) }, 8000) }
 
   const handleBuy = useCallback(async () => {
     if (!connected) { await connect(); return }
     if (!kasAmount || !selected || Number(kasAmount) <= 0) return
+    const bridge = walletBridge()
+    if (!bridge) { showError("KasWare wallet bridge unavailable"); return }
 
     setSwapping(true)
     setError(null)
     setTxId(null)
     try {
-      const res = await fetch(`${NETWORK.backend}/api/bonding/buy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: selected.ticker, kas_amount: Number(kasAmount), buyer: address }),
-      })
-      if (!res.ok) {
-        const err = await res.text()
-        throw new Error(err)
-      }
-      const result = await res.json()
-      showSuccess(`Bought ${result.tokens_bought} ${selected.ticker}!`)
+      const res = await buyOnCurve(selected.ticker, Number(kasAmount), bridge)
+      showSuccess(`Bought ${selected.ticker} on-chain!`)
       setKasAmount("")
-      fetchTokens(false)
+      setTxId(res.txid)
+      fetchTokens()
     } catch (err) {
       showError(err instanceof Error ? err.message : "Buy failed")
     } finally {
       setSwapping(false)
     }
-  }, [connected, connect, kasAmount, selected, address, fetchTokens])
-
-  const handleSell = useCallback(async (token: BondingTokenInfo) => {
-    if (!connected) { await connect(); return }
-    if (!window.kasware) { showError("KasWare not detected"); return }
-    setSwapping(true)
-    setError(null)
-    try {
-      const res = await fetch(`${NETWORK.backend}/api/bonding/sell`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: token.ticker, token_amount: 0, seller: address }),
-      })
-      if (!res.ok) {
-        const err = await res.text()
-        throw new Error(err)
-      }
-      const result = await res.json()
-      showSuccess(`Sold tokens for ${result.kas_returned} KAS!`)
-      fetchTokens(false)
-    } catch (err) {
-      showError(err instanceof Error ? err.message : "Sell failed")
-    } finally {
-      setSwapping(false)
-    }
-  }, [connected, connect, address, fetchTokens])
+  }, [connected, connect, kasAmount, selected, fetchTokens])
 
   if (!connected) {
     return (
       <div className="max-w-lg mx-auto">
         <div className="glass rounded-2xl p-8 text-center">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-kaspa-cyan to-kaspa-green flex items-center justify-center mx-auto mb-4">
-            <Rocket size={28} className="text-white" />
+            <TrendingUp size={28} className="text-white" />
           </div>
-          <h2 className="text-xl font-bold mb-2">Launch Tokens</h2>
+          <h2 className="text-xl font-bold mb-2">KRON Bonding Curves</h2>
           <p className="text-kaspa-muted text-sm mb-6">
-            New tokens start on a bonding curve. Once they graduate, liquidity is locked forever.
+            New tokens start on an L1 bonding curve (KCC-20). Once they raise their target, they graduate to a liquidity-locked AMM pool.
           </p>
           <button onClick={connect} className="btn-primary px-8 py-3">
             {connecting ? "Connecting..." : "Connect KasWare"}
@@ -162,82 +122,23 @@ export default function BondingCurve() {
     <div className="max-w-3xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-display font-bold">Token Launchpad</h2>
-          <p className="text-xs text-kaspa-muted">Bonding curve → graduated AMM with locked liquidity</p>
+          <h2 className="text-lg font-display font-bold">Bonding Curves</h2>
+          <p className="text-xs text-kaspa-muted">KCC-20 tokens on KRON L1 covenants · mainnet</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowCreate(true)} className="btn-primary text-sm flex items-center gap-1.5 px-4">
-            <Rocket size={14} /> Launch Token
-          </button>
-          <button onClick={() => fetchTokens(false)} className="btn-secondary p-2.5">
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
+        <button onClick={() => fetchTokens()} className="btn-secondary p-2.5" title="Refresh">
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+        </button>
       </div>
 
-      <AnimatePresence>
-        {showCreate && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="glass rounded-2xl p-5"
-          >
-            <h3 className="font-semibold mb-4">Launch New Token</h3>
-            <div className="space-y-3">
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-xs text-kaspa-muted block mb-1">Ticker</label>
-                  <input
-                    type="text" value={newTicker} onChange={e => setNewTicker(e.target.value.toUpperCase().slice(0, 10))}
-                    placeholder="e.g. MOON" className="w-full bg-white/5 rounded-xl px-4 py-2.5 outline-none border border-kaspa-border/50"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="text-xs text-kaspa-muted block mb-1">Name</label>
-                  <input
-                    type="text" value={newName} onChange={e => setNewName(e.target.value)}
-                    placeholder="e.g. Moon Token" className="w-full bg-white/5 rounded-xl px-4 py-2.5 outline-none border border-kaspa-border/50"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-kaspa-muted block mb-1">Icon</label>
-                  <select
-                    value={newIcon} onChange={e => setNewIcon(e.target.value)}
-                    className="bg-white/5 rounded-xl px-3 py-2.5 outline-none border border-kaspa-border/50 text-lg"
-                  >
-                    {ICONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="text-[11px] text-kaspa-muted space-y-1 bg-white/5 rounded-xl p-3">
-                <p>• Price starts at 0.001 KAS and increases linearly to 0.01 KAS</p>
-                <p>• Graduates to an AMM pool at {1000} KAS market cap</p>
-                <p>• Initial liquidity is locked forever — rug-proof</p>
-                <p>• Total supply: 1,000,000,000 tokens</p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Cancel</button>
-                <button onClick={handleCreate} disabled={!newTicker || !newName} className="btn-primary flex-1">
-                  Launch {newTicker || "Token"}
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {loading && tokens.length === 0 ? (
+      {loading ? (
         <div className="glass rounded-2xl p-12 text-center text-kaspa-muted text-sm">
           <RefreshCw size={20} className="animate-spin mx-auto mb-2" />
-          Loading tokens...
+          Loading live curves...
         </div>
       ) : tokens.length === 0 ? (
         <div className="glass rounded-2xl p-12 text-center">
-          <Rocket size={24} className="text-kaspa-muted mx-auto mb-3" />
-          <p className="text-kaspa-muted text-sm mb-1">No tokens launched yet</p>
-          <p className="text-xs text-kaspa-muted/60 mb-4">Launch the first token on the bonding curve</p>
-          <button onClick={() => setShowCreate(true)} className="btn-primary text-sm">Launch Token</button>
+          <TrendingUp size={24} className="text-kaspa-muted mx-auto mb-3" />
+          <p className="text-kaspa-muted text-sm">No pre-graduation KCC-20 tokens found</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -261,9 +162,12 @@ export default function BondingCurve() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-mono text-sm">{token.currentPrice.toFixed(6)} KAS</div>
+                  <div className="font-mono text-sm">{token.price.toFixed(8)} KAS</div>
                   <div className="text-[10px] text-kaspa-muted">
-                    MCap: {token.marketCapKas.toFixed(2)} KAS
+                    Raised: {token.kasRaised.toFixed(2)} KAS ·{" "}
+                    <span className={token.priceChange < 0 ? "text-kaspa-red" : "text-kaspa-green"}>
+                      {token.priceChange >= 0 ? "+" : ""}{token.priceChange.toFixed(2)}%
+                    </span>
                   </div>
                 </div>
               </div>
@@ -274,8 +178,8 @@ export default function BondingCurve() {
                 />
               </div>
               <div className="flex justify-between text-[10px] text-kaspa-muted">
-                <span>{token.supplySold.toFixed(0)} / {token.totalSupply.toFixed(0)} tokens sold</span>
                 <span>{token.progressPct.toFixed(1)}% to graduation ({token.graduationThreshold} KAS)</span>
+                <span>Bonding curve · KCC-20</span>
               </div>
 
               {selected?.ticker === token.ticker && (
@@ -299,27 +203,18 @@ export default function BondingCurve() {
                       </div>
                     </div>
                     {kasAmount && Number(kasAmount) > 0 && (
-                      <p className="text-xs text-kaspa-green mt-1">
-                        ~{(Number(kasAmount) / token.currentPrice).toFixed(2)} {token.ticker}
+                      <p className="text-xs text-kaspa-muted mt-1">
+                        ~{(Number(kasAmount) / (token.price || 1)).toFixed(2)} {token.ticker} + protocol fees
                       </p>
                     )}
                   </div>
                   <button
                     onClick={handleBuy}
                     disabled={!kasAmount || Number(kasAmount) <= 0 || swapping}
-                    className="btn-primary w-full py-3 flex items-center justify-center gap-2"
+                    className="btn-primary w-full py-3"
                   >
-                    {swapping ? "Buying..." : `Buy ${token.ticker} with KAS`}
+                    {swapping ? "Building + signing..." : connected ? `Buy ${token.ticker} with KAS` : "Connect KasWare"}
                   </button>
-                  {token.supplySold > 0 && (
-                    <button
-                      onClick={() => handleSell(token)}
-                      disabled={swapping}
-                      className="btn-secondary w-full mt-2 text-sm"
-                    >
-                      Sell {token.ticker} (90% of curve price)
-                    </button>
-                  )}
                 </motion.div>
               )}
             </motion.div>
@@ -335,7 +230,10 @@ export default function BondingCurve() {
             exit={{ opacity: 0, y: -8 }}
             className="glass rounded-xl p-3 text-sm text-kaspa-green text-center"
           >
-            TX: <a href={`https://explorer.kaspa.org/transactions/${txId}`} target="_blank" rel="noopener noreferrer" className="underline">{txId.slice(0, 20)}...</a>
+            TX:{" "}
+            <a href={`https://explorer.kaspa.org/transactions/${txId}`} target="_blank" rel="noopener noreferrer" className="underline">
+              {txId.slice(0, 20)}... <ExternalLink size={10} className="inline" />
+            </a>
           </motion.div>
         )}
         {error && (
