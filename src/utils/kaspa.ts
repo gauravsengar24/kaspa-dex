@@ -118,6 +118,12 @@ function resolveProvider(): KasWareProvider | null {
       signPskt: async (params: any) => {
         return legacy.request({ method: "signPskt", params: [params] }) as Promise<string>
       },
+      signMessage: async (message: string) => {
+        return legacy.request({ method: "signMessage", params: [message] }) as Promise<string>
+      },
+      getXOnlyPublicKey: async () => {
+        return legacy.request({ method: "getXOnlyPublicKey" }) as Promise<string>
+      },
       pushTx: async (tx: string) => {
         return legacy.request({ method: "pushTx", params: [tx] }) as Promise<string>
       },

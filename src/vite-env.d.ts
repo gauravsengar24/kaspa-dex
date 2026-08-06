@@ -29,6 +29,8 @@ interface KasWareProvider {
   disconnect: (origin: string) => Promise<void>
   sendKaspa: (toAddress: string, sompi: number, options?: { priorityFee?: number; payload?: string }) => Promise<string>
   signPskt: (params: { txJsonString: string; options?: { signInputs?: { index: number; sighashType?: number }[] } }) => Promise<string>
+  signMessage: (message: string) => Promise<string>
+  getXOnlyPublicKey: () => Promise<string>
   pushTx: (txJson: string) => Promise<string>
   getUtxoEntries: (address?: string) => Promise<any[]>
   on: (event: "accountsChanged" | "networkChanged", callback: (...args: any[]) => void) => void
