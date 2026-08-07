@@ -781,7 +781,10 @@ export async function assembleAndSize(
   return { asm, pskt, networkFee }
 }
 
-/** Funding entries from the wallet's own P2PK UTXOs (largest first, capped count). */
+/** Funding entries from the wallet's own P2PK UTXOs (largest first, capped count).
+ *  Each entry carries the SAME address's P2PK scriptPublicKey — without it the
+ *  serializer omits `scriptPublicKey` from the funding inputs and a re-parse
+ *  (wallet `signPskt` / our wRPC submit) throws "...does not contain scriptPublicKey". */
 export async function fundingEntriesFromWallet(
   bridge: WalletBridge,
   address: string,
@@ -789,10 +792,15 @@ export async function fundingEntriesFromWallet(
 ): Promise<kron.spend.FundingEntry[]> {
   const raw = await bridge.getUtxoEntries?.(address)
   if (!raw?.length) throw new Error("No spendable P2PK UTXOs in wallet")
+  const k = await getKaspa()
+  const scriptPublicKey = k.payToAddressScript(address)
   return raw
     .map((f) => ({
       outpoint: { transactionId: f.outpoint.transactionId, index: f.outpoint.index },
       amount: BigInt(f.entry?.amount ?? 0),
+      scriptPublicKey,
+      blockDaaScore: 0n,
+      isCoinbase: false,
     }))
     .filter((f) => f.amount >= kron.spend.COVENANT_DUST)
     .sort((a, b) => (a.amount < b.amount ? 1 : -1))
