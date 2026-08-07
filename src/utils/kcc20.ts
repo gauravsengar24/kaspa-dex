@@ -573,7 +573,7 @@ async function poolParams(tick: string, s: CurveState | null) {
       lpCovid: p.lp_token_covenant_id ?? "",
     }
     state = {
-      kasReserve: BigInt(p.kas_reserve_sompi ?? 0) * kron.curve.SCALE,
+      kasReserve: BigInt(p.kas_reserve_sompi ?? 0) / kron.curve.SCALE,
       tokenReserve: BigInt(p.token_reserve ?? 0),
       tokenCovid,
       totalShares: BigInt(p.shares ?? 0),
