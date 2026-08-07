@@ -1,18 +1,4 @@
-import { useEffect, useState } from "react"
-import {
-  Activity,
-  ArrowLeftRight,
-  ArrowUpRight,
-  BarChart3,
-  Coins,
-  Gamepad2,
-  Landmark,
-  Layers3,
-  Rocket,
-  Sprout,
-  TrendingUp,
-  Wallet,
-} from "lucide-react"
+import { Activity, ArrowLeftRight, ArrowUpRight, BarChart3, Coins, Gamepad2, Landmark, Layers3, Rocket, Sprout, TrendingUp, Wallet } from "lucide-react"
 import { PageHeader } from "./aetheris/PageHeader"
 import { StatTile } from "./aetheris/StatTile"
 import { GlassCard, SectionLabel } from "./aetheris/GlassCard"
@@ -20,21 +6,6 @@ import { Sparkline } from "./aetheris/Sparkline"
 import { usePrices } from "../hooks/usePrices"
 import { usePools } from "../hooks/usePools"
 import { useKcc20State } from "../hooks/useKcc20State"
-import { NETWORK } from "../utils/constants"
-
-interface NetworkInfo {
-  network: string
-  dexAddress: string
-  kasUsdtRate: number
-  chainDaa: number | null
-}
-
-interface OrderInfo {
-  id: string
-  amount_kas: number
-  token_out: string
-  status: string
-}
 
 interface OverviewProps {
   onNavigate: (tab: string) => void
@@ -65,41 +36,14 @@ export default function Overview({ onNavigate }: OverviewProps) {
   const { prices } = usePrices()
   const { pools } = usePools()
   const { trades: l1Trades, pools: l1Pools, info: l1Info } = useKcc20State()
-  const [network, setNetwork] = useState<NetworkInfo | null>(null)
-  const [orders, setOrders] = useState<OrderInfo[]>([])
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const [netRes, orderRes] = await Promise.all([
-          fetch(`${NETWORK.backend}/api/network`),
-          fetch(`${NETWORK.backend}/api/covenant/orders`),
-        ])
-        if (!cancelled) {
-          if (netRes.ok) setNetwork(await netRes.json())
-          if (orderRes.ok) {
-            const data = await orderRes.json()
-            setOrders(Array.isArray(data.orders) ? data.orders : [])
-          }
-        }
-      } catch {
-        /* offline */
-      }
-    }
-    load()
-    const t = setInterval(load, 30_000)
-    return () => {
-      cancelled = true
-      clearInterval(t)
-    }
-  }, [])
+  const kasPrice = l1Info.kasUsd || prices.kas.usd || 0.02
+  const l1Tvl = l1Pools.reduce((s, p) => s + (p.tvlUsd || 0), 0)
+  const tvl = l1Tvl || pools.reduce((s, p) => s + (p.tvl || 0), 0)
+  const volume24h = l1Pools.reduce((s, p) => s + (p.volUsd || 0), 0) || pools.reduce((s, p) => s + (p.volume24h || 0), 0) * kasPrice
+  const liveness = l1Info.synced ? `DAA ${l1Info.tipDaa?.toLocaleString() ?? "—"}` : "syncing"
 
-  const kasPrice = prices.kas.usd || 0.02
-  const tvl = pools.reduce((s, p) => s + (p.tvl || 0), 0)
-  const volume24h = pools.reduce((s, p) => s + (p.volume24h || 0), 0) * kasPrice
-  const openOrders = orders.filter((o) => o.status === "OPEN").length
-  const rate = network?.kasUsdtRate ?? 0.15
+  const activityChart = l1Info.activity.length ? l1Info.activity.map((b) => b.moves) : sparkData
 
   const baseActivity: {
     id: number
@@ -109,12 +53,12 @@ export default function Overview({ onNavigate }: OverviewProps) {
     tone: string
     txid?: string
   }[] = [
-    { id: 1, type: "Swap", detail: `1,240 KAS → ${(1240 * rate).toFixed(2)} USDT`, when: "2m", tone: "emerald" },
-    { id: 2, type: "Network", detail: network?.network ?? "testnet-10", when: network?.chainDaa ? `DAA ${network.chainDaa.toLocaleString()}` : "live", tone: "gold" },
-    { id: 3, type: "Rate", detail: `1 KAS ≈ ${rate.toFixed(2)} USDT`, when: "oracle", tone: "violet" },
-    { id: 4, type: "Liquidity", detail: `${l1Pools.length || pools.length} live pools · $${fmt(tvl, 0)} TVL`, when: "30s", tone: "emerald" },
-    { id: 5, type: "Covenants", detail: `${openOrders} open HTLC orders`, when: "on-chain", tone: "violet" },
-    { id: 6, type: "L1 Trades", detail: `${l1Trades.length} KCC-20 trades decoded`, when: l1Info.synced ? `DAA ${l1Info.daaScore?.toLocaleString() ?? "—"}` : "syncing", tone: "gold" },
+    { id: 1, type: "Network", detail: `mainnet · ${l1Info.dataSource === "offline" ? "index offline" : l1Info.dataSource} index`, when: liveness, tone: "gold" },
+    { id: 2, type: "Rate", detail: `KAS ≈ $${kasPrice > 0 ? kasPrice.toFixed(4) : "—"}`, when: l1Info.priceSource ?? "oracle", tone: "violet" },
+    { id: 3, type: "Active", detail: `${l1Info.activeCovenants?.toLocaleString() ?? "—"} covenants live`, when: "chain", tone: "emerald" },
+    { id: 4, type: "Moves 24h", detail: `${l1Info.moves24h?.toLocaleString() ?? "—"} covenant moves`, when: "24h", tone: "violet" },
+    { id: 5, type: "Liquidity", detail: `${l1Pools.length || pools.length} live pools · $${fmt(tvl, 0)} TVL`, when: "30s", tone: "emerald" },
+    { id: 6, type: "L1 Trades", detail: `${l1Trades.length} KCC-20 trades decoded`, when: l1Info.synced ? `DAA ${l1Info.tipDaa?.toLocaleString() ?? "—"}` : "syncing", tone: "gold" },
   ]
 
   const feed = l1Trades.slice(0, 4).map((t) => ({
@@ -145,26 +89,26 @@ export default function Overview({ onNavigate }: OverviewProps) {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile icon={Wallet} label="Portfolio" value={`$${fmt(tvl, 0)}`} delta="TVL across pools" tone="emerald" />
-        <StatTile icon={Layers3} label="Supplied" value={`$${fmt(tvl / 2, 0)}`} delta="Yield 6.8%" tone="emerald" />
-        <StatTile icon={ArrowUpRight} label="Borrowed" value="$3,120" delta="HF 1.87×" tone="gold" />
-        <StatTile icon={TrendingUp} label="Open Orders" value={String(openOrders)} delta={`${rate.toFixed(2)} USDT / KAS`} tone="violet" />
+        <StatTile icon={Wallet} label="Total TVL" value={`$${fmt(tvl, 0)}`} delta={`${l1Pools.length || pools.length} pools · curves`} tone="emerald" />
+        <StatTile icon={Layers3} label="Active Covenants" value={l1Info.activeCovenants?.toLocaleString() ?? "—"} delta={l1Info.dataSource === "offline" ? "index offline" : `via ${l1Info.dataSource}`} tone="emerald" />
+        <StatTile icon={ArrowUpRight} label="Moves 24h" value={l1Info.moves24h?.toLocaleString() ?? "—"} delta={`${l1Info.births24h ?? "—"} born · ${l1Info.burns24h ?? "—"} burned`} tone="gold" />
+        <StatTile icon={TrendingUp} label="Volume 24h" value={`$${fmt(volume24h, 0)}`} delta={`KAS $${kasPrice > 0 ? kasPrice.toFixed(4) : "—"}`} tone="violet" />
       </div>
 
       <div className="mt-5 grid grid-cols-12 gap-5">
         <GlassCard className="col-span-12 lg:col-span-8">
           <SectionLabel
-            eyebrow="Market · 30D"
-            title="KAS price across the day"
+            eyebrow="Network · 24h"
+            title="Covenant activity (KasCov index)"
             right={
               <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[color:var(--emerald-accent)]">
-                {kasPrice > 0 ? `$${kasPrice.toFixed(4)}` : "live"}
+                {l1Info.dataSource === "offline" ? "offline" : `${l1Info.moves24h?.toLocaleString() ?? "—"} moves`} · DAA {l1Info.tipDaa?.toLocaleString() ?? "—"}
               </span>
             }
           />
           <div className="rounded-xl border border-border/40 bg-[oklch(0.11_0.02_265)]/60 p-4">
             <Sparkline
-              data={sparkData}
+              data={activityChart}
               color="oklch(0.86 0.2 165)"
               width={720}
               height={160}

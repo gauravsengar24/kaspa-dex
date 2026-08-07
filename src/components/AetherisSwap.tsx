@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ArrowDown, ArrowUpRight, Settings2, Zap } from "lucide-react"
+import { ArrowDown, ArrowUpRight, Settings2, Zap, Activity, Coins, Layers } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "./aetheris/PageHeader"
 import { StatTile } from "./aetheris/StatTile"
@@ -10,7 +10,7 @@ import { Sparkline } from "./aetheris/Sparkline"
 import { ActionDialog } from "./aetheris/ActionDialog"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
-import { useKcc20State } from "../hooks/useKcc20State"
+import { useKcc20State, type LiveTrade } from "../hooks/useKcc20State"
 import { KASPA_TOKEN } from "../utils/constants"
 import type { TokenInfo } from "../types"
 import {
@@ -27,7 +27,7 @@ import {
 
 type Pool = { id: number; pair: string; tvl: string; vol: string; apr: string; data: number[] }
 
-type Trade = { id: number; kind: "Buy" | "Sell"; amount: string; price: string; when: string }
+type Trade = LiveTrade
 
 const fmt = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })
@@ -35,6 +35,7 @@ const fmt = (n: number, d = 2) =>
 export default function AetherisSwap() {
   const wallet = useKaspaWallet()
   const { tokenPrice } = usePrices()
+  const { pools: livePools, trades: liveTrades, tokens: kccTokens, info: l1Info } = useKcc20State()
 
   const [tokens, setTokens] = useState<Kcc20Token[]>([])
   const [from, setFrom] = useState<TokenInfo>(KASPA_TOKEN)
@@ -49,8 +50,6 @@ export default function AetherisSwap() {
   const [quoteAmt, setQuoteAmt] = useState("")
   const [lpOpen, setLpOpen] = useState(false)
   const [selectedPool, setSelectedPool] = useState<Pool | null>(null)
-
-  const { pools: livePools, trades: liveTrades, tokens: kccTokens, info: l1Info } = useKcc20State()
 
   const pools: Pool[] = livePools
   const trades: Trade[] = liveTrades
@@ -86,8 +85,12 @@ export default function AetherisSwap() {
     }
   }, [kccToken, amount, sellMode])
 
-  const kasUsdPrice = tokenPrice("KAS").usd
+  const kasUsdPrice = tokenPrice("KAS").usd || l1Info.kasUsd || 0.02
   const inAmt = Number(amount) || 0
+
+  const liveVol = livePools.reduce((s, p) => s + (p.volUsd || 0), 0)
+  const liveTvl = livePools.reduce((s, p) => s + (p.tvlUsd || 0), 0)
+  const liveActive = l1Info.activeCovenants ?? livePools.length
 
   const estimatedOutput = useMemo(() => {
     if (kccQuote && quoteToken === kccToken?.tick && quoteAmt === amount) {
@@ -167,9 +170,14 @@ export default function AetherisSwap() {
     { key: "k", header: "Type", render: (row) => (
       <span className={`font-mono text-[11px] font-semibold ${row.kind === "Buy" ? "text-[color:var(--emerald-accent)]" : "text-[color:var(--crimson)]"}`}>{row.kind}</span>
     )},
+    { key: "t", header: "Token", render: (row) => <span className="font-mono text-[11px] text-muted-foreground">{row.tick}</span> },
     { key: "a", header: "Amount", render: (row) => <span className="font-mono text-xs">{row.amount}</span> },
     { key: "p", header: "Price", render: (row) => <span className="font-mono text-xs">{row.price}</span> },
-    { key: "w", header: "When", align: "right", render: (row) => <span className="font-mono text-[11px] text-muted-foreground">{row.when}</span> },
+    { key: "w", header: "When", align: "right", render: (row) => (
+      <span className="font-mono text-[11px] text-muted-foreground" title={row.txid ? `TX ${row.txid}` : undefined}>
+        {row.txid ? row.txid.slice(0, 8) + "…" : row.when}
+      </span>
+    )},
   ]
 
   return (
@@ -182,10 +190,10 @@ export default function AetherisSwap() {
           <div className="flex items-center gap-2">
             <span
               className="hidden items-center gap-1.5 rounded-lg border border-border/60 bg-background/40 px-2.5 py-1.5 font-mono text-[10px] tracking-wide text-muted-foreground sm:flex"
-              title={`State read from ${l1Info.rpcUrl}`}
+              title={`Verified state from ${l1Info.indexerUrl} · price ${l1Info.priceSource ?? "kraken"}`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${l1Info.synced ? "bg-[color:var(--emerald-accent)]" : "bg-amber-400"}`} data-live />
-              DIRECT FROM NODE{l1Info.daaScore != null ? ` · DAA ${l1Info.daaScore}` : ""}
+              DIRECT FROM NODE{l1Info.kasUsd ? ` · KAS $${l1Info.kasUsd.toFixed(4)}` : ""}{l1Info.tipDaa != null ? ` · DAA ${l1Info.tipDaa}` : ""}
             </span>
             <button
               type="button"
@@ -201,10 +209,10 @@ export default function AetherisSwap() {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile label="24h Volume" value="$412.6M" delta="+8.2%" tone="emerald" />
-        <StatTile label="Total Liquidity" value="$1.28B" delta="+2.1%" tone="emerald" />
-        <StatTile label="Fees (24h)" value="$1.03M" delta="Distributed" tone="gold" />
-        <StatTile label="Avg Gas" value="0.00021 KAS" delta="Kasplex L2" tone="violet" />
+        <StatTile icon={ArrowUpRight} label="24h Volume" value={`$${fmt(liveVol, 0)}`} delta={l1Info.dataSource === "kascov" ? "KasCov index" : l1Info.dataSource} tone="emerald" />
+        <StatTile icon={Layers} label="Total Liquidity" value={`$${fmt(liveTvl, 0)}`} delta={`${livePools.length} pools · curves`} tone="emerald" />
+        <StatTile icon={Coins} label="Fees (24h)" value={`$${fmt(liveVol * 0.003, 0)}`} delta="0.30% of volume" tone="gold" />
+        <StatTile icon={Activity} label="Active Covenants" value={fmt(liveActive, 0)} delta={`DAA ${l1Info.tipDaa?.toLocaleString() ?? "—"}`} tone="violet" />
       </div>
 
       <div className="mt-5 grid grid-cols-12 gap-5">

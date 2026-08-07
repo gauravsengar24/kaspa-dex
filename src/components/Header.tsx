@@ -1,19 +1,9 @@
-import { useEffect, useState } from "react"
 import { Activity, Fuel, Layers3, Settings, Wallet } from "lucide-react"
 import WalletConnect from "./WalletConnect"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { usePrices } from "../hooks/usePrices"
-import { usePools } from "../hooks/usePools"
-import { NETWORK } from "../utils/constants"
+import { useKcc20State } from "../hooks/useKcc20State"
 import { formatAddress } from "../utils/kaspa"
-
-interface NetworkInfo {
-  dexAddress: string
-  kasUsdtRate: number
-  network: string
-  explorer: string
-  chainDaa: number | null
-}
 
 export default function Header({
   onNavigate,
@@ -22,48 +12,29 @@ export default function Header({
 }) {
   const wallet = useKaspaWallet()
   const { prices } = usePrices()
-  const { pools } = usePools()
-  const [network, setNetwork] = useState<NetworkInfo | null>(null)
+  const { pools, info } = useKcc20State()
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch(`${NETWORK.backend}/api/network`)
-        if (res.ok && !cancelled) setNetwork(await res.json())
-      } catch {
-        /* offline */
-      }
-    }
-    load()
-    const t = setInterval(load, 60_000)
-    return () => {
-      cancelled = true
-      clearInterval(t)
-    }
-  }, [])
-
-  const kasPrice = prices.kas.usd || 0.02
-  const tvl = pools.reduce((s, p) => s + (p.tvl || 0), 0)
-  const volume = pools.reduce((s, p) => s + (p.volume24h || 0), 0) * kasPrice
+  const kasPrice = info.kasUsd || prices.kas.usd || 0.02
+  const tvl = pools.reduce((s, p) => s + (p.tvlUsd || 0), 0)
+  const volume = pools.reduce((s, p) => s + (p.volUsd || 0), 0)
 
   const stats = [
     {
       icon: Layers3,
       label: "TVL",
-      value: `$${(tvl / 1e6).toFixed(2)}M`,
+      value: `$${tvl >= 1e6 ? (tvl / 1e6).toFixed(2) + "M" : tvl >= 1e3 ? (tvl / 1e3).toFixed(2) + "K" : tvl.toFixed(0)}`,
       tone: "emerald" as const,
     },
     {
       icon: Fuel,
       label: "Network",
-      value: network?.network ?? "testnet-10",
+      value: info.dataSource === "offline" ? "index offline" : `mainnet · ${info.dataSource}`,
       tone: "gold" as const,
     },
     {
       icon: Activity,
       label: "Vol 24h",
-      value: `$${volume >= 1e6 ? (volume / 1e6).toFixed(1) + "M" : volume >= 1e3 ? (volume / 1e3).toFixed(1) + "K" : volume.toFixed(0)}`,
+      value: `$${volume >= 1e6 ? (volume / 1e6).toFixed(1) + "M" : volume >= 1e3 ? (volume / 1e3).toFixed(1) + "K" : volume.toFixed(0)}${kasPrice > 0 ? ` · $${kasPrice.toFixed(4)}` : ""}`,
       tone: "violet" as const,
     },
   ]

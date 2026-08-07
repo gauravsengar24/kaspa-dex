@@ -8,11 +8,13 @@ import {
 import { GlassCard, SectionLabel } from "./aetheris/GlassCard"
 import {
   fetchLaunchFee, checkTickAvailable, checkImageUrl, listRegistryTokens,
-  resolveImport, registerImport,
-  type LaunchFee, type RegistryToken, type SelfReported,
+  resolveImport, registerImport, canonicalRegMsg, recordToken, signMessageWithKasware,
+  type LaunchFee, type RegistryToken, type SelfReported, type RegisterRecord,
 } from "../utils/kron"
 import { useKaspaWallet } from "../hooks/useKaspaWallet"
 import { formatKaspa } from "../utils/kaspa"
+import { walletBridge } from "../utils/kcc20"
+import { deployLaunch, SUPPLY_MIN } from "../utils/kron-launch"
 import { cn } from "../lib/utils"
 
 const TICK_RE = /^[a-z0-9][a-z0-9]{1,11}$/
@@ -49,6 +51,11 @@ export default function Launchpad() {
   const [importTxid, setImportTxid] = useState("")
   const [imported, setImported] = useState<{ covid: string; token?: string } | null>(null)
   const [importing, setImporting] = useState(false)
+
+  /* deploy state */
+  const [deploying, setDeploying] = useState(false)
+  const [deployMsg, setDeployMsg] = useState("")
+  const [deployed, setDeployed] = useState<{ tick: string; initTxid: string; curve: string } | null>(null)
 
   const tickDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const imageDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -101,14 +108,63 @@ export default function Launchpad() {
     return () => { if (imageDebounce.current) clearTimeout(imageDebounce.current) }
   }, [imageUrl])
 
-  /** On-chain deploy contract runs on the KRON platform; hand off with the validated params. */
-  const handleLaunch = () => {
-    if (!formValid) return
-    const qs = new URLSearchParams({
-      tick, name, supply, image: imageUrl || "",
-    })
-    window.open(`https://kron.technology/launch/new?${qs.toString()}`, "_blank", "noopener")
-    toast.info("On-chain deploy handed to the KRON platform")
+  /** On-chain deploy: in-browser silverc compile → CREATE (curve genesis) → INIT (pre-mint), then register. */
+  const handleLaunch = async () => {
+    if (!formValid || deploying) return
+    const bridge = walletBridge()
+    if (!bridge) { toast.error("Kasware not detected — install it to deploy on-chain"); return }
+    setDeploying(true)
+    setDeployed(null)
+    setDeployMsg("Preparing deploy…")
+    try {
+      const pubkey = await bridge.getPublicKey()
+      if (!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error("wallet returned an invalid public key")
+      const changeAddress = await bridge.getAddress()
+      if (!changeAddress) throw new Error("no wallet address")
+
+      const result = await deployLaunch(bridge, {
+        creatorFeeOwner: pubkey,
+        supply: BigInt(Math.max(Number(SUPPLY_MIN), Math.min(MAX_SUPPLY, supplyNum))),
+        devAmount: 1n,
+        changeAddress,
+      }, {
+        onProgress: (msg) => { setDeployMsg(msg); toast.loading(msg, { id: "launch-msg" }) },
+      })
+      toast.dismiss("launch-msg")
+
+      const rec: RegisterRecord = {
+        tick,
+        txid: result.genesisTxid,
+        creator: changeAddress,
+        tokenCovid: result.tokenCovid || null,
+        curveCovid: result.curveCovid,
+        name: name.trim() || null,
+        description: description.trim() || null,
+        image: imageUrl.trim() || null,
+        links: {
+          website: website.trim() || null,
+          x: x.trim() || null,
+          telegram: telegram.trim() || null,
+        },
+      }
+      const sign = await signMessageWithKasware(canonicalRegMsg(rec))
+      if (sign) {
+        try { await recordToken(rec, sign); loadRecent() } catch (e) {
+          toast.warning(e instanceof Error ? `Deployed — but registry write failed: ${e.message}` : "Deployed — but registry write failed")
+        }
+      } else {
+        toast.warning("Deployed on-chain — registry sign skipped (signMessage unavailable)")
+      }
+
+      setDeployed({ tick, initTxid: result.initTxId, curve: result.curveCovid })
+      toast.success(`Launch complete — ${Number(result.initialInventory).toLocaleString()} tokens pre-minted`)
+    } catch (e) {
+      toast.dismiss("launch-msg")
+      toast.error(e instanceof Error ? e.message : "Deploy failed")
+    } finally {
+      setDeploying(false)
+      setDeployMsg("")
+    }
   }
 
   /** Import an already-deployed KCC-20 token: resolve txid → register with canonical manifest. */
@@ -282,13 +338,31 @@ export default function Launchpad() {
                   ))}
                 </div>
 
-                <button onClick={handleLaunch} disabled={!formValid}
-                  className={cn("btn-primary w-full", !formValid && "opacity-40")}>
-                  <Rocket size={16} />
-                  {!formValid ? "Complete the form to launch" : connected ? "Continue — hand off to KRON platform" : "Wire wallet to hand off"}
+                <button onClick={handleLaunch} disabled={!formValid || deploying}
+                  className={cn("btn-primary w-full", (!formValid || deploying) && "opacity-40")}>
+                  {deploying ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={16} />}
+                  {deploying
+                    ? "Deploying…"
+                    : !formValid
+                      ? "Complete the form to launch"
+                      : !connected
+                        ? "Wire wallet to deploy"
+                        : "Deploy on-chain"}
                 </button>
+                {deployMsg && (
+                  <p className="flex items-center gap-2 font-mono text-[10px] text-kaspa-gold">
+                    {deploying && <Loader2 size={12} className="animate-spin" />}
+                    {deployMsg}
+                  </p>
+                )}
+                {deployed && (
+                  <div className="rounded-xl border border-kaspa-green/30 bg-kaspa-green/5 p-3 font-mono text-[11px] text-kaspa-green">
+                    <p><b>{deployed.tick.toUpperCase()}</b> deployed — INIT tx <span className="break-all">{deployed.initTxid}</span></p>
+                    <p className="mt-1 break-all text-kaspa-muted">curve {deployed.curve}</p>
+                  </div>
+                )}
                 <p className="text-center font-mono text-[9px] text-muted-foreground">
-                  Deploy is non-custodial and executes on the KRON platform; your ticker stays reserved. After deploy, switch to Import to list it here.
+                  Deploy is non-custodial: the covenant templates compile in your browser and your wallet signs only the funding inputs.
                 </p>
               </motion.div>
             ) : (
