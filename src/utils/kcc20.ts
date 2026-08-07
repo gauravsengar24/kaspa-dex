@@ -415,6 +415,8 @@ async function getTokenFromKascov(tick: string): Promise<Kcc20Token | null> {
     realKas,
     tokenReserve: p.token_reserve ?? 0,
     graduated,
+    vKas: p.v_kas_units ?? baked?.vKas ?? 0,
+    graduationKas: p.graduation_kas_sompi ?? baked?.graduationKas ?? 0,
   } as CurveState
   const price = m.spot_num_sompi && m.spot_den ? m.spot_num_sompi / SOMPI_PER_KAS / m.spot_den : undefined
   return {
