@@ -865,9 +865,9 @@ function captureWrappedOutputsForDebug(spend: kron.spend.CovenantSpend, k: Kaspa
           h.ok = false
           ;(h as any).wrapErr = err2 instanceof Error ? `${err2.name}: ${err2.message}` : String(err2)
         }
-        ;(w[`__wrappedOut_${i}`] ??= []).push(h)
+        ;((w[`__wrappedOut_${i}`] ??= []) as unknown[]).push(h)
       } catch (err) {
-        ;(w[`__wrappedOut_${i}`] ??= []).push({
+        ;((w[`__wrappedOut_${i}`] ??= []) as unknown[]).push({
           i,
           ok: false,
           hashErr: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
