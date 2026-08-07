@@ -27,8 +27,6 @@ const toneClass = {
   crimson: "text-[color:var(--crimson)]",
 }
 
-const sparkData = [22, 24, 23, 26, 28, 27, 30, 34, 32, 38, 42, 40, 44, 47, 45, 48]
-
 const fmt = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })
 
@@ -43,7 +41,7 @@ export default function Overview({ onNavigate }: OverviewProps) {
   const volume24h = l1Pools.reduce((s, p) => s + (p.volUsd || 0), 0) || pools.reduce((s, p) => s + (p.volume24h || 0), 0) * kasPrice
   const liveness = l1Info.synced ? `DAA ${l1Info.tipDaa?.toLocaleString() ?? "—"}` : "syncing"
 
-  const activityChart = l1Info.activity.length ? l1Info.activity.map((b) => b.moves) : sparkData
+  const activityChart = l1Info.activity.map((b) => b.moves)
 
   const baseActivity: {
     id: number
@@ -89,10 +87,10 @@ export default function Overview({ onNavigate }: OverviewProps) {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile icon={Wallet} label="Total TVL" value={`$${fmt(tvl, 0)}`} delta={`${l1Pools.length || pools.length} pools · curves`} tone="emerald" />
-        <StatTile icon={Layers3} label="Active Covenants" value={l1Info.activeCovenants?.toLocaleString() ?? "—"} delta={l1Info.dataSource === "offline" ? "index offline" : `via ${l1Info.dataSource}`} tone="emerald" />
-        <StatTile icon={ArrowUpRight} label="Moves 24h" value={l1Info.moves24h?.toLocaleString() ?? "—"} delta={`${l1Info.births24h ?? "—"} born · ${l1Info.burns24h ?? "—"} burned`} tone="gold" />
-        <StatTile icon={TrendingUp} label="Volume 24h" value={`$${fmt(volume24h, 0)}`} delta={`KAS $${kasPrice > 0 ? kasPrice.toFixed(4) : "—"}`} tone="violet" />
+        <StatTile icon={Wallet} label="Total TVL" value={l1Pools.length ? `$${fmt(tvl, 0)}` : "—"} delta={`${l1Pools.length || "·"} pools · curves`} tone="emerald" />
+        <StatTile icon={Layers3} label="Active Covenants" value={l1Info.activeCovenants != null ? l1Info.activeCovenants.toLocaleString() : "—"} delta={l1Info.dataSource === "offline" ? "index offline" : `via ${l1Info.dataSource}`} tone="emerald" />
+        <StatTile icon={ArrowUpRight} label="Moves 24h" value={l1Info.moves24h != null ? l1Info.moves24h.toLocaleString() : "—"} delta={`${l1Info.births24h ?? "·"} born · ${l1Info.burns24h ?? "·"} burned`} tone="gold" />
+        <StatTile icon={TrendingUp} label="Volume 24h" value={volume24h > 0 ? `$${fmt(volume24h, 0)}` : "—"} delta={kasPrice > 0 ? `KAS $${kasPrice.toFixed(4)}` : "—"} tone="violet" />
       </div>
 
       <div className="mt-5 grid grid-cols-12 gap-5">
@@ -107,19 +105,20 @@ export default function Overview({ onNavigate }: OverviewProps) {
             }
           />
           <div className="rounded-xl border border-border/40 bg-[oklch(0.11_0.02_265)]/60 p-4">
-            <Sparkline
-              data={activityChart}
-              color="oklch(0.86 0.2 165)"
-              width={720}
-              height={160}
-            />
+            {activityChart.length >= 2 ? (
+              <Sparkline data={activityChart} color="oklch(0.86 0.2 165)" width={720} height={160} />
+            ) : (
+              <div className="flex items-center justify-center" style={{ height: 160 }}>
+                <span className="font-mono text-[11px] text-muted-foreground">Awaiting KasCov index…</span>
+              </div>
+            )}
           </div>
           <div className="mt-4 grid grid-cols-4 gap-3 font-mono text-[11px]">
             {[
-              ["Swap Vol", `$${fmt(volume24h, 0)}`, "emerald"],
-              ["Vault APY", "142.6%", "gold"],
-              ["Predictions Won", "24 / 41", "violet"],
-              ["Vote Power", "18,204 veAETH", "gold"],
+              ["Swap Volume (24h)", volume24h > 0 ? `$${fmt(volume24h, 0)}` : "—", "emerald"],
+              ["Fees (24h)", volume24h > 0 ? `$${fmt(volume24h * 0.003, 0)}` : "—", "gold"],
+              ["Live Markets", l1Pools.length ? String(l1Pools.length) : "—", "violet"],
+              ["Tip DAA", l1Info.tipDaa ? l1Info.tipDaa.toLocaleString() : "—", "gold"],
             ].map(([l, v, t]) => (
               <div key={l} className="rounded-lg border border-border/50 px-3 py-2">
                 <div className="text-muted-foreground">{l}</div>
