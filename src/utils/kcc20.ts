@@ -91,6 +91,68 @@ function sequencer() {
   return new kron.client.SequencerClient(SEQUENCER_URL)
 }
 
+/**
+ * KRON's REST API is CORS-pinned to kron.technology, so browsers on other origins
+ * (our HF app) can't reach the registry/template/indexer endpoints directly. The
+ * STATIC pieces (token registry + compiled covenant templates + baked fee params)
+ * are snapshotted into /kron-snapshot.json and served from a CDN; the LIVE piece
+ * (curve/pool reserves) comes from kasCov (CORS-open) or the node wRPC (no CORS).
+ */
+
+const SNAPSHOT_URL =
+  "https://cdn.jsdelivr.net/gh/gauravsengar24/kaspa-dex@kron-snapshot/public/kron-snapshot.json"
+
+let _snapshotPromise: Promise<{ registry: RegistryRecord[]; compile: Record<string, any> } | null> | null = null
+async function loadSnapshot(): Promise<{ registry: RegistryRecord[]; compile: Record<string, any> } | null> {
+  const base = await fetch(SNAPSHOT_URL)
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+  if (!base) return null
+  const compile: Record<string, any> = {}
+  for (const part of (base.parts ?? [])) {
+    const p = await fetch(`https://cdn.jsdelivr.net/gh/gauravsengar24/kaspa-dex@kron-snapshot/public/${part}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null)
+    if (p?.compile) Object.assign(compile, p.compile)
+  }
+  return { registry: base.registry ?? [], compile }
+}
+function snapshot(): Promise<any> {
+  _snapshotPromise ??= loadSnapshot()
+  return _snapshotPromise
+}
+
+interface RegistryRecord {
+  network: string
+  covenantId: string
+  symbol: string
+  name: string
+  decimals: number
+  logoURI?: string
+  extensions: {
+    chainVerified?: boolean
+    curveCovenantId: string
+    poolCovenantId: string | null
+    graduated: boolean
+    curveParams: Record<string, any>
+    templateVersion?: Record<string, any>
+  }
+}
+
+async function registryTokens(): Promise<RegistryRecord[]> {
+  try {
+    const list = (await registry().tokenlist()) as any
+    if (list?.tokens?.length) return list.tokens as RegistryRecord[]
+  } catch { /* KRON CORS-blocked → fall through to snapshot */ }
+  const snap = await snapshot()
+  return snap?.registry ?? []
+}
+
+async function snapshotTemplate(tick: string): Promise<any | null> {
+  const snap = await snapshot()
+  return snap?.compile?.[tick.toLowerCase()] ?? null
+}
+
 /* ---------------------------------------------------------------------------
  * Templates (compiled once per token, cached)
  * ------------------------------------------------------------------------- */
@@ -104,26 +166,27 @@ export interface CompiledTemplates {
 
 const _templateCache = new Map<string, CompiledTemplates>()
 
-/** Convert a server blob ({script, stateStart, params}) into SDK template shapes. */
+/** Convert a server blob ({scriptHex, stateStart, params}) into SDK template shapes. */
 function compileFromBody(body: any): any {
   const b = (s: any) => (typeof s === "string" ? hexToBytes(s) : new Uint8Array(s ?? []))
-  const p = body?.pool?.params
+  const p = body?.params ?? body?.pool?.params
+  const fee = (x: any, y: any) => BigInt(x ?? y ?? 0)
   return {
-    token: { script: b(body?.token?.script), stateStart: Number(body?.token?.stateStart ?? 0) },
+    token: { script: b(body?.token?.scriptHex ?? body?.token?.script), stateStart: Number(body?.token?.stateStart ?? 0) },
     pool: {
-      script: b(body?.pool?.script),
+      script: b(body?.pool?.scriptHex ?? body?.pool?.script),
       stateStart: Number(body?.pool?.stateStart ?? 0),
-      canonicalInventoryRequired: body?.pool?.canonicalLpInventory ?? true,
+      canonicalInventoryRequired: body?.pool?.canonicalLpInventory ?? body?.canonicalLpInventory ?? true,
     },
-    curve: { script: b(body?.curve?.script), stateStart: Number(body?.curve?.stateStart ?? 0) },
+    curve: { script: b(body?.curve?.scriptHex ?? body?.curve?.script), stateStart: Number(body?.curve?.stateStart ?? 0) },
     params: p
       ? {
           creatorFeeOwner: b(p.creatorFeeOwner),
           platformFeeOwner: b(p.platformFeeOwner),
-          creatorFeeBps: BigInt(p.creatorFeeBps ?? 0),
-          platformFeeBps: BigInt(p.platformFeeBps ?? 0),
-          lpFeeBps: BigInt(p.lpFeeBps ?? 0),
-          lockedShares: BigInt(p.lockedShares ?? 0),
+          creatorFeeBps: fee(p.dexCreatorFeeBps, p.creatorFeeBps),
+          platformFeeBps: fee(p.dexPlatformFeeBps, p.platformFeeBps),
+          lpFeeBps: fee(p.dexLpFeeBps, p.lpFeeBps),
+          lockedShares: BigInt(p.poolLockedShares ?? p.lockedShares ?? 0),
         }
       : emptyPoolParams(),
   }
@@ -149,24 +212,36 @@ export async function getTemplates(tick: string): Promise<CompiledTemplates> {
   const cached = _templateCache.get(key)
   if (cached) return cached
 
-  const reg = registry()
-  const list = await reg.tokenlist()
-  const entry = list.tokens.find((t) => t.symbol.toLowerCase() === key)
-  if (!entry) throw new Error(`Token ${tick} not found in KRON registry`)
+  const registryEntry = (await registryTokens()).find((t) => t.symbol.toLowerCase() === key)
+  let compiled: any = null
 
-  const res = await fetch(TEMPLATE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...(entry.extensions.curveParams ?? {}),
-      tokenCovid: entry.covenantId,
-      templateVersion: entry.extensions.templateVersion,
-    }),
-  })
-  if (!res.ok) throw new Error(`cp-template compile failed (HTTP ${res.status})`)
-  const body = await res.json()
-  const compiled = compileFromBody(body)
-  if (!compiled.token?.script?.length) throw new Error(`cp-template returned no token script for ${tick}`)
+  if (registryEntry) {
+    try {
+      const res = await fetch(TEMPLATE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(registryEntry.extensions.curveParams ?? {}),
+          tokenCovid: registryEntry.covenantId,
+          templateVersion: registryEntry.extensions.templateVersion,
+        }),
+      })
+      if (res.ok) {
+        const body = await res.json()
+        compiled = compileFromBody(body)
+      }
+    } catch {
+      /* cross-origin → fall through to snapshot */
+    }
+  }
+
+  if (!compiled || !compiled.token?.script?.length) {
+    const snap = await snapshotTemplate(tick)
+    if (snap) compiled = compileFromBody(snap)
+  }
+  if (!compiled?.token?.script?.length) {
+    throw new Error(`Templates unavailable for ${tick} (KRON registry is CORS-restricted and no snapshot entry)`)
+  }
   const templates = compiled as CompiledTemplates
   _templateCache.set(key, templates)
   return templates
@@ -256,8 +331,8 @@ function curveStateFromRecord(r: any | null): CurveState | null {
 /** Discover every chain-verified KCC-20 token (registry tokenlist, verified tier only). */
 export async function discoverTokens(): Promise<Kcc20Token[]> {
   if (_marketCache) return _marketCache
-  const list = await registry().tokenlist()
-  const out = list.tokens
+  const list = await registryTokens()
+  const out = list
     .filter((t) => t.extensions.chainVerified && t.covenantId)
     .map((t) => ({
       tick: t.symbol,
@@ -286,15 +361,105 @@ export async function discoverTokens(): Promise<Kcc20Token[]> {
   return out
 }
 
+// kasCov live market state (CORS-enabled) — primary browser source for reserves/prices.
+const KASCOV_MARKETS_URL = "https://kascov.io/data/mainnet/markets"
+
+interface KascovMarketRow {
+  market: {
+    phase: string
+    reserve_sompi?: number
+    spot_num_sompi?: number
+    spot_den?: number
+    program: {
+      token_covenant_id?: string
+      token_reserve?: number
+      v_kas_units?: number
+      graduation_kas_sompi?: number
+      kas_reserve_sompi?: number
+      shares?: number
+      lp_token_covenant_id?: string
+    }
+  }
+}
+
+let _kascovMarkets: { at: number; rows: KascovMarketRow[] } | null = null
+async function kascovMarkets(): Promise<KascovMarketRow[]> {
+  const fresh = !!(_kascovMarkets && Date.now() - _kascovMarkets.at < 10_000)
+  if (fresh) return _kascovMarkets!.rows
+  const res = await fetch(KASCOV_MARKETS_URL)
+  if (!res.ok) return _kascovMarkets?.rows ?? []
+  const js = await res.json()
+  _kascovMarkets = { at: Date.now(), rows: js.markets ?? [] }
+  return _kascovMarkets.rows
+}
+
+/**
+ * Build a token's live record from kasCov (CORS-open) instead of the KRON indexer
+ * when the latter is unreachable from the browser. kasCov program exposes the same
+ * on-chain reserves (sompi) the curve/pool math needs.
+ */
+async function getTokenFromKascov(tick: string): Promise<Kcc20Token | null> {
+  const list = await registryTokens()
+  const entry = list.find((e) => e.symbol.toLowerCase() === tick.toLowerCase())
+  if (!entry) return null
+  const rows = await kascovMarkets()
+  const row = rows.find((r) => (r.market.program.token_covenant_id ?? "") === entry.covenantId)
+  if (!row) return null
+  const m = row.market
+  const p = m.program
+  const graduated = m.phase === "graduated"
+  const baked = curveStateFromRecord(entry.extensions.curveParams)
+  const realKas = m.reserve_sompi ?? p.kas_reserve_sompi ?? 0
+  const live = {
+    ...(baked ?? {}),
+    realKas,
+    tokenReserve: p.token_reserve ?? 0,
+    graduated,
+  } as CurveState
+  const price = m.spot_num_sompi && m.spot_den ? m.spot_num_sompi / SOMPI_PER_KAS / m.spot_den : undefined
+  return {
+    tick: entry.symbol,
+    name: entry.name,
+    decimals: entry.decimals,
+    covenantId: entry.covenantId,
+    curveCovenantId: entry.extensions.curveCovenantId ?? "",
+    poolCovenantId: entry.extensions.poolCovenantId,
+    graduated,
+    price: price ?? 0,
+    change24h: 0,
+    volume24h: 0,
+    volumeTotal: 0,
+    trades24h: 0,
+    cpState: live,
+    curveParams: baked,
+    reserveKas: String(realKas),
+    tokenReserve: String(p.token_reserve ?? 0),
+    toTokenInfo(): TokenInfo {
+      return {
+        ticker: entry.symbol,
+        name: entry.name,
+        decimals: entry.decimals,
+        icon: "K",
+        isKrc20: true,
+        address: entry.covenantId,
+      }
+    },
+  }
+}
+
 /** Live balances for one address across all KCC-20 tokens (indexer address tokenlist). */
 export async function getBalances(address: string): Promise<Kcc20Balance[]> {
-  const rows = await indexer().tokenlist(address)
-  return rows.map((r) => ({
-    tick: r.tick,
-    balance: r.balance,
-    dec: r.dec,
-    parsed: Number(r.balance) / Math.pow(10, r.dec),
-  }))
+  try {
+    const rows = await indexer().tokenlist(address)
+    return rows.map((r) => ({
+      tick: r.tick,
+      balance: r.balance,
+      dec: r.dec,
+      parsed: Number(r.balance) / Math.pow(10, r.dec),
+    }))
+  } catch {
+    return []
+  }
 }
 
 /** Live token record: price, graduation state, covenant ids, live curve/pool reserves.
@@ -313,8 +478,8 @@ export async function getToken(tick: string): Promise<Kcc20Token | null> {
     }
     if (!baked) {
       try {
-        const list = await registry().tokenlist()
-        const entry = list.tokens.find((e) => e.symbol.toLowerCase() === tick.toLowerCase())
+        const list = await registryTokens()
+        const entry = list.find((e) => e.symbol.toLowerCase() === tick.toLowerCase())
         baked = curveStateFromRecord(entry?.extensions.curveParams ?? null)
       } catch { /* keep null */ }
     }
@@ -348,7 +513,12 @@ export async function getToken(tick: string): Promise<Kcc20Token | null> {
       },
     }
   } catch {
-    return null
+    /* indexer unreachable from this origin (KRON CORS) → kasCov live state */
+    try {
+      return await getTokenFromKascov(tick)
+    } catch {
+      return null
+    }
   }
 }
 
@@ -370,15 +540,43 @@ function curveStateForQuote(s: CurveState): kron.curve.CpState {
 
 /** Live pool reserves + fee params for a graduated token. */
 async function poolParams(tick: string, s: CurveState | null) {
-  const idx = indexer()
-  const head = await idx.poolhead(tick.toLowerCase())
   const tok = await getToken(tick)
-  const state: kron.poolCp.PoolCpState = {
-    kasReserve: BigInt(head.reserves.kasReserve) * kron.curve.SCALE,
-    tokenReserve: BigInt(head.reserves.tokenReserve),
-    tokenCovid: kron.genesis.covidToBytes(tok?.covenantId ?? ""),
-    totalShares: BigInt(head.reserves.totalShares),
-    lpCovid: head.reserves.lpCovid ? kron.genesis.covidToBytes(head.reserves.lpCovid) : new Uint8Array(),
+  const tokenCovid = kron.genesis.covidToBytes(tok?.covenantId ?? "")
+  let state: kron.poolCp.PoolCpState
+  let reserves: any
+
+  try {
+    const idx = indexer()
+    const head = await idx.poolhead(tick.toLowerCase())
+    reserves = head.reserves
+    state = {
+      kasReserve: BigInt(head.reserves.kasReserve) * kron.curve.SCALE,
+      tokenReserve: BigInt(head.reserves.tokenReserve),
+      tokenCovid,
+      totalShares: BigInt(head.reserves.totalShares),
+      lpCovid: head.reserves.lpCovid ? kron.genesis.covidToBytes(head.reserves.lpCovid) : new Uint8Array(),
+    }
+  } catch {
+    // indexer CORS-restricted → kasCov graduated-pool program state
+    const rows = await kascovMarkets()
+    const list = await registryTokens()
+    const entry = list.find((e) => e.symbol.toLowerCase() === tick.toLowerCase())
+    const row = rows.find((r) => (r.market.program.token_covenant_id ?? "") === entry?.covenantId)
+    const p = row?.market?.program
+    if (!p) throw new Error(`no pool state for ${tick}`)
+    reserves = {
+      kasReserve: String(p.kas_reserve_sompi ?? 0),
+      tokenReserve: String(p.token_reserve ?? 0),
+      totalShares: String(p.shares ?? 0),
+      lpCovid: p.lp_token_covenant_id ?? "",
+    }
+    state = {
+      kasReserve: BigInt(p.kas_reserve_sompi ?? 0) * kron.curve.SCALE,
+      tokenReserve: BigInt(p.token_reserve ?? 0),
+      tokenCovid,
+      totalShares: BigInt(p.shares ?? 0),
+      lpCovid: p.lp_token_covenant_id ? kron.genesis.covidToBytes(p.lp_token_covenant_id) : new Uint8Array(),
+    }
   }
   const params: kron.poolCp.PoolCpParams = {
     creatorFeeOwner: new Uint8Array(32),
@@ -388,7 +586,7 @@ async function poolParams(tick: string, s: CurveState | null) {
     lpFeeBps: BigInt(s?.dexLpFeeBps ?? 0),
     lockedShares: BigInt(s?.poolLockedShares ?? 0),
   }
-  return { state, params, reserves: head.reserves }
+  return { state, params, reserves }
 }
 
 /** Quote buying tokens with `kasAmount` (KAS) against live covenant state. */
@@ -877,23 +1075,51 @@ async function livePool(tick: string, tok: Kcc20Token) {
   }
 
   if (!pool) {
-    const idx = indexer()
-    const head = await idx.poolhead(tick.toLowerCase())
-    pool = {
-      transactionId: head.pool.transactionId,
-      index: head.pool.index,
-      state: {
-        kasReserve: BigInt(head.reserves.kasReserve) * kron.curve.SCALE,
-        tokenReserve: BigInt(head.reserves.tokenReserve),
-        tokenCovid: kron.genesis.covidToBytes(tok.covenantId),
-        totalShares: BigInt(head.reserves.totalShares),
-        lpCovid: head.reserves.lpCovid ? kron.genesis.covidToBytes(head.reserves.lpCovid) : new Uint8Array(),
-      },
-      tokenUtxo: {
-        transactionId: head.poolToken.transactionId,
-        index: head.poolToken.index,
-        value: 0n,
-      },
+    try {
+      const idx = indexer()
+      const head = await idx.poolhead(tick.toLowerCase())
+      pool = {
+        transactionId: head.pool.transactionId,
+        index: head.pool.index,
+        state: {
+          kasReserve: BigInt(head.reserves.kasReserve) * kron.curve.SCALE,
+          tokenReserve: BigInt(head.reserves.tokenReserve),
+          tokenCovid: kron.genesis.covidToBytes(tok.covenantId),
+          totalShares: BigInt(head.reserves.totalShares),
+          lpCovid: head.reserves.lpCovid ? kron.genesis.covidToBytes(head.reserves.lpCovid) : new Uint8Array(),
+        },
+        tokenUtxo: {
+          transactionId: head.poolToken.transactionId,
+          index: head.poolToken.index,
+          value: 0n,
+        },
+      }
+    } catch {
+      /* sequencer + indexer both unreachable (KRON CORS) → kasCov state + node wRPC lookup */
+      const { state } = await poolParams(tick, reserves)
+      const poolWon = kron.poolCpV3.poolCpV3Address(k, templates.pool, state, NETWORK_ID)
+      const rpc = await getRpc()
+      const lookup = await rpc.getUtxosByAddresses({ addresses: [poolWon] })
+      const entry = lookup.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
+      if (!entry) throw new Error("Could not locate the live pool UTXO — retry in a moment")
+      const invAddr = kron.kcc20.kcc20Address(
+        k,
+        templates.token,
+        kron.kcc20.covenantIdOwned(poolCovidBytes, BigInt(state.tokenReserve), true),
+        NETWORK_ID,
+      )
+      const invLookup = await rpc.getUtxosByAddresses({ addresses: [invAddr] })
+      const invEntry = invLookup.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
+      pool = {
+        transactionId: entry.outpoint.transactionId,
+        index: entry.outpoint.index,
+        state,
+        tokenUtxo: {
+          transactionId: invEntry?.outpoint?.transactionId ?? entry.outpoint.transactionId,
+          index: invEntry?.outpoint?.index ?? entry.outpoint.index,
+          value: 0n,
+        },
+      }
     }
   }
 

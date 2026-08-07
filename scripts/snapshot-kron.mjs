@@ -67,7 +67,37 @@ for (const t of tl.tokens) {
 }
 
 mkdirSync("public", { recursive: true })
+mkdirSync("public/kron-snapshot-parts", { recursive: true })
+
+// Baked covenant scripts are large (KRON templates embed their fee/curve constants
+// in-script), so split the compile payload across parts — each file must stay well
+// under jsDelivr's ~20MB per-file limit.
+const MAX_PART_BYTES = 12_000_000
+const parts = []
+let current = {}
+let currentBytes = 0
+for (const [key, value] of Object.entries(out.compile ?? {})) {
+  const entry = JSON.stringify(value)
+  if (currentBytes > 0 && currentBytes + entry.length > MAX_PART_BYTES) {
+    parts.push(current)
+    current = {}
+    currentBytes = 0
+  }
+  current[key] = value
+  currentBytes += entry.length
+}
+if (currentBytes > 0) parts.push(current)
+
+const partFiles = []
+parts.forEach((part, i) => {
+  const fn = `public/kron-snapshot-parts/kron-${i}.json`
+  writeFileSync(fn, JSON.stringify({ compile: part }))
+  partFiles.push(`kron-snapshot-parts/kron-${i}.json`)
+})
+out.parts = partFiles
+delete out.compile
 writeFileSync("public/kron-snapshot.json", JSON.stringify(out))
-const failed = tl.tokens.filter((t) => !out.compile[t.symbol.toLowerCase()]).map((t) => t.symbol)
-console.log(`compiled ${Object.keys(out.compile).length}/${tl.tokens.length} · failed: ${failed.join(", ") || "none"}`)
+
+const failed = tl.tokens.filter((t) => !Object.values(parts).some((p) => p[t.symbol.toLowerCase()])).map((t) => t.symbol)
+console.log(`compiled ${tl.tokens.length - failed.length}/${tl.tokens.length} · parts: ${partFiles.length} · failed: ${failed.join(", ") || "none"}`)
 if (failed.length) process.exit(1)
