@@ -133,12 +133,12 @@ export default function Overview({ onNavigate }: OverviewProps) {
         <GlassCard className="col-span-12 lg:col-span-4">
           <SectionLabel eyebrow="Live" title="Recent activity" right={<Activity className="h-4 w-4 text-[color:var(--emerald-accent)]" />} />
           <div className="space-y-2">
-            {[...activity, ...feed].map((a) => (
-              <div
-                key={a.id}
-                title={a.txid ? `TX ${a.txid}` : undefined}
-                className="flex items-center justify-between rounded-lg border border-border/40 bg-[oklch(0.16_0.025_265)]/60 px-3 py-2"
-              >
+            {activity.map((a) => (
+                <div
+                  key={a.id}
+                  title={a.txid ? `TX ${a.txid}` : undefined}
+                  className="flex items-center justify-between rounded-lg border border-border/40 bg-[oklch(0.16_0.025_265)]/60 px-3 py-2"
+                >
                 <div className="min-w-0">
                   <div className={`font-mono text-[10px] uppercase tracking-wider ${toneClass[a.tone as keyof typeof toneClass]}`}>
                     {a.type}
