@@ -4,11 +4,13 @@ import time
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 import httpx
 
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.models import OrderCreate, SwapRequest, BroadcastRequest, HealthResponse
@@ -1075,6 +1077,45 @@ async def pool_user_lp(ticker: str, user: str):
         raise HTTPException(404, f"Pool {ticker} not found")
     shares = pool.get_user_lp(user)
     return {"ticker": ticker.upper(), "user": user, "lpShares": round(shares, 6)}
+
+
+# ========== KRON RELAY ==========
+# KRON's REST APIs (api/idx/seq.kron.technology) are CORS-pinned to kron.technology,
+# so browsers on our origin can't call them directly. Same-origin passthrough:
+#   /kron/idx/token/kron/poolhead  ->  https://idx.kron.technology/v1/kcc20/token/kron/poolhead
+#   /kron/api/api/registry/tokenlist -> https://api.kron.technology/api/registry/tokenlist
+#   /kron/seq/head?pool=...        -> https://seq.kron.technology/head?pool=...
+KRON_UPSTREAM = {
+    "api": "https://api.kron.technology",
+    "idx": "https://idx.kron.technology/v1/kcc20",
+    "seq": "https://seq.kron.technology",
+}
+
+
+@app.api_route("/kron/{service}/{relay_path:path}", methods=["GET"])
+async def kron_relay(service: str, relay_path: str, request: Request):
+    base = KRON_UPSTREAM.get(service)
+    if not base:
+        raise HTTPException(404, f"unknown kron relay service {service!r}")
+    url = f"{base}/{relay_path}"
+    if request.query_params:
+        url += "?" + urlencode(list(request.query_params.items()))
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            upstream = await client.get(
+                url,
+                headers={"user-agent": "Mozilla/5.0 (Aetheris HF relay)"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"kron relay {service} error: {exc}")
+    headers = {"access-control-allow-origin": "*"}
+    content_type = upstream.headers.get("content-type")
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=content_type,
+        headers=headers,
+    )
 
 
 # ========== FRONTEND ==========

@@ -27,10 +27,29 @@ type RpcClient = InstanceType<Kaspa["RpcClient"]>
  * Mainnet only (TN10 retired).
  */
 
-const INDEXER_URL = "https://idx.kron.technology/v1/kcc20"
-const REGISTRY_URL = "https://api.kron.technology"
-const SEQUENCER_URL = "https://seq.kron.technology"
-const TEMPLATE_URL = "https://api.kron.technology/api/native/cp-template"
+/**
+ * KRON's REST APIs are CORS-pinned to kron.technology, so on deployed origins (the
+ * HF Space) the browser can't reach them directly. The FastAPI backend exposes a
+ * same-origin relay at /kron/{api|idx|seq}/... — when served from the app origin the
+ * SDK endpoints are rewritten to the relay. Outside that origin (local dev, node
+ * scripts) we use the canonical URLs. kasCov/static snapshots remain as fallback.
+ */
+const isRelayedOrigin =
+  typeof location !== "undefined" &&
+  (/\.hf\.space$/i.test(location.hostname) || /^kaspadex/i.test(location.hostname))
+
+const INDEXER_URL = isRelayedOrigin
+  ? `${location.origin}/kron/idx`
+  : "https://idx.kron.technology/v1/kcc20"
+const REGISTRY_URL = isRelayedOrigin
+  ? `${location.origin}/kron/api`
+  : "https://api.kron.technology"
+const SEQUENCER_URL = isRelayedOrigin
+  ? `${location.origin}/kron/seq`
+  : "https://seq.kron.technology"
+const TEMPLATE_URL = isRelayedOrigin
+  ? `${location.origin}/kron/api/api/native/cp-template`
+  : "https://api.kron.technology/api/native/cp-template"
 const NODE_WRPC = "wss://node.kron.technology"
 const NETWORK_ID = "mainnet"
 const SOMPI_PER_KAS = 100_000_000
@@ -552,7 +571,7 @@ async function poolParams(tick: string, s: CurveState | null) {
     const head = await idx.poolhead(tick.toLowerCase())
     reserves = head.reserves
     state = {
-      kasReserve: BigInt(head.reserves.kasReserve) * kron.curve.SCALE,
+      kasReserve: BigInt(head.reserves.kasReserve),
       tokenReserve: BigInt(head.reserves.tokenReserve),
       tokenCovid,
       totalShares: BigInt(head.reserves.totalShares),
@@ -1059,7 +1078,7 @@ async function livePool(tick: string, tok: Kcc20Token) {
         transactionId: head.head.poolOutpoint.transactionId,
         index: head.head.poolOutpoint.index,
         state: {
-          kasReserve: BigInt(head.head.reserves.kasReserve) * kron.curve.SCALE,
+          kasReserve: BigInt(head.head.reserves.kasReserve),
           tokenReserve: BigInt(head.head.reserves.tokenReserve),
           tokenCovid: kron.genesis.covidToBytes(tok.covenantId),
           totalShares: BigInt(head.head.reserves.totalShares),
@@ -1084,7 +1103,7 @@ async function livePool(tick: string, tok: Kcc20Token) {
         transactionId: head.pool.transactionId,
         index: head.pool.index,
         state: {
-          kasReserve: BigInt(head.reserves.kasReserve) * kron.curve.SCALE,
+          kasReserve: BigInt(head.reserves.kasReserve),
           tokenReserve: BigInt(head.reserves.tokenReserve),
           tokenCovid: kron.genesis.covidToBytes(tok.covenantId),
           totalShares: BigInt(head.reserves.totalShares),
