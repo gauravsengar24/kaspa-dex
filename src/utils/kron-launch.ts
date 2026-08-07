@@ -126,8 +126,22 @@ export interface CompilerCore {
 
 let _silverc: Promise<CompilerCore> | null = null
 
-async function importMod(url: string): Promise<any> {
-  return await import(/* @vite-ignore */ url) as any
+/** Silverc runtime sources: served locally during dev (`public/kron-silverc`) and, on
+ *  platforms that reject binary files (HuggingFace Spaces), from the jsDelivr mirror of
+ *  the GitHub-tagged runtime bundle. */
+const SILVERC_LOCAL = "/kron-silverc"
+const SILVERC_CDN = "https://cdn.jsdelivr.net/gh/gauravsengar24/kaspa-dex@silverc-runtime/public/kron-silverc"
+
+async function silvercMod(rel: string): Promise<any> {
+  try {
+    return await import(/* @vite-ignore */ `${SILVERC_LOCAL}/${rel}`)
+  } catch {
+    return await import(/* @vite-ignore */ `${SILVERC_CDN}/${rel}`)
+  }
+}
+
+function silvercWasmPath(): string {
+  return `${SILVERC_CDN}/silverc_wasm.wasm`
 }
 
 /** blake2b-256 (the covenant template hash). */
@@ -150,17 +164,16 @@ function rconcat(...arr: Uint8Array[]): Uint8Array {
  */
 export function loadSilverc(): Promise<CompilerCore> {
   _silverc ??= (async () => {
-    const BASE = "/kron-silverc"
-    const glue = await importMod(`${BASE}/silverc_wasm-BTSjJr4e.js`)
-    const bg = await importMod(`${BASE}/silverc_wasm_bg-fdbtgxnf.js`)
-    const kcc20 = await importMod(`${BASE}/kcc20-Dfi_6-9r.js`)
-    const curveCp = await importMod(`${BASE}/curve_cp-D7Vj80I3.js`)
-    const poolCp = await importMod(`${BASE}/amm_pool_cp_v3-liI7d5lT.js`)
-    const buyOrder = await importMod(`${BASE}/buy_order-BdZc6mtW.js`)
+    const glue = await silvercMod(`silverc_wasm-BTSjJr4e.js`)
+    const bg = await silvercMod(`silverc_wasm_bg-fdbtgxnf.js`)
+    const kcc20 = await silvercMod(`kcc20-Dfi_6-9r.js`)
+    const curveCp = await silvercMod(`curve_cp-D7Vj80I3.js`)
+    const poolCp = await silvercMod(`amm_pool_cp_v3-liI7d5lT.js`)
+    const buyOrder = await silvercMod(`buy_order-BdZc6mtW.js`)
     if (typeof glue.default !== "function") {
       throw new Error("silverc glue module is missing its init export (corrupt build?)")
     }
-    await glue.default({ module_or_path: bg.default ?? `${BASE}/silverc_wasm.wasm` })
+    await glue.default({ module_or_path: bg.default ?? silvercWasmPath() })
     const compile = (src: string, argsJson: string) => {
       const r = glue.compile(src, argsJson)
       const get = (key: string) => (r instanceof Map ? r.get(key) : r?.[key])
