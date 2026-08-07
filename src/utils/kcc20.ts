@@ -708,7 +708,19 @@ export function walletBridge(): WalletBridge | null {
       const accounts = await w.getAccounts?.()
       return accounts?.[0] ?? null
     },
-    getPublicKey: async () => String(await w.getPublicKey()),
+    getPublicKey: async () => {
+      const raw = String(await w.getPublicKey()).trim()
+      const hex = raw.replace(/^0x/i, "")
+      const bytes = hexToBytes(hex)
+      if (bytes.length === 33 && (bytes[0] === 0x02 || bytes[0] === 0x03)) {
+        return bytesToHex(bytes.slice(1))
+      }
+      if (bytes.length === 65 && bytes[0] === 0x04) {
+        return bytesToHex(bytes.slice(1))
+      }
+      if (bytes.length === 32) return hex
+      throw new Error(`KasWare getPublicKey returned ${bytes.length} bytes (expected a 32/33/65-byte secp256k1 key)`)
+    },
     signPskt: async (txJsonString, signInputs) =>
       w.signPskt({ txJsonString, options: { signInputs } }),
     getUtxoEntries: w.getUtxoEntries,
