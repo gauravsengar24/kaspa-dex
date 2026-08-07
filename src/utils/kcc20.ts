@@ -837,6 +837,48 @@ function captureSpendForDebug(
   }
 }
 
+/** Replicate the SDK's `new TransactionOutput(.., new HashCRD(covid))` wrapper per output to
+ *  find which element/conversion the wasm-transaction constructor rejects in the browser. */
+function captureWrappedOutputsForDebug(spend: kron.spend.CovenantSpend, k: Kaspa): void {
+  try {
+    const w = window as unknown as Record<string, unknown>
+    ;(spend.outputs ?? []).forEach((o: any, i: number) => {
+      try {
+        const hash = new k.Hash(o?.binding?.covid ?? "")
+        const h = {
+          i,
+          ok: true,
+          hashLen: hash.toString().length,
+          hashCtor: (hash.constructor as unknown as { name?: string })?.name ?? "?",
+          outputCtor: null as string | null,
+          bindingAuthorizingInput: null as string | null,
+        }
+        try {
+          const out = new k.TransactionOutput(
+            BigInt(o?.value ?? 0),
+            o?.scriptPublicKey,
+            new k.CovenantBinding(o?.binding?.authorizingInput ?? 0, hash),
+          )
+          h.outputCtor = (out?.constructor as unknown as { name?: string })?.name ?? "?"
+          h.bindingAuthorizingInput = out?.covenant?.authorizingInput?.toString?.() ?? "?"
+        } catch (err2) {
+          h.ok = false
+          ;(h as any).wrapErr = err2 instanceof Error ? `${err2.name}: ${err2.message}` : String(err2)
+        }
+        ;(w[`__wrappedOut_${i}`] ??= []).push(h)
+      } catch (err) {
+        ;(w[`__wrappedOut_${i}`] ??= []).push({
+          i,
+          ok: false,
+          hashErr: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        })
+      }
+    })
+  } catch {
+    /* diagnostics must never break the swap */
+  }
+}
+
 export async function assembleAndSize(
   spend: kron.spend.CovenantSpend,
   fundingEntries: kron.spend.FundingEntry[],
@@ -845,6 +887,7 @@ export async function assembleAndSize(
 ): Promise<AssembledResult> {
   captureSpendForDebug(spend, fundingEntries, changeAddress)
   const k = await getKaspa()
+  captureWrappedOutputsForDebug(spend, k)
   try {
     let asm = kron.spend.assembleNativeTx(k, {
       spend,
