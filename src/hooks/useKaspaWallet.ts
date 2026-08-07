@@ -6,14 +6,13 @@ import {
   refreshWalletBalance,
   onAccountsChanged,
   onNetworkChanged,
-  ensureProvider,
-  waitForProvider,
+  getProvider,
+  awaitProviderLate,
   getKasWareVersion,
   getKRC20Balances,
   formatKaspa,
   loadSession,
   clearSession,
-  tryRestoreProvider,
 } from "../utils/kaspa"
 
 const initialState: WalletState = {
@@ -42,69 +41,72 @@ export function useKaspaWallet() {
     let cancelled = false
 
     const fetchKrc20 = async () => {
-      const tokens = await getKRC20Balances()
-      if (mountedRef.current) {
-        const map: Record<string, number> = {}
-        for (const t of tokens) {
-          map[t.tick] = Number(t.balance) / Math.pow(10, Number(t.dec || 8))
+      try {
+        const tokens = await getKRC20Balances()
+        if (mountedRef.current) {
+          const map: Record<string, number> = {}
+          for (const t of tokens) {
+            map[t.tick] = Number(t.balance) / Math.pow(10, Number(t.dec || 8))
+          }
+          setKrc20Balances(map)
         }
-        setKrc20Balances(map)
-      }
+      } catch { /* balances are cosmetic — never block */ }
     }
 
-    const restoreSession = async () => {
+    /** Silent connect: `getAccounts()` returns WITHOUT a wallet popup, so this is
+     *  safe to run in the background. A saved session must still match, otherwise
+     *  we only re-enable the wallet for an already-authorized account. */
+    const silentlyConnect = async (p: KasWareProvider) => {
       const saved = loadSession()
-      if (!saved) return null
-
-      const p = await tryRestoreProvider()
-      if (cancelled || !p) return saved
-
       try {
         const accounts = await p.getAccounts()
-        if (accounts && accounts.length > 0 && accounts[0] === saved.address) {
-          const balanceData = await p.getBalance()
-          const balance = balanceData?.total ? Number(balanceData.total) / 100_000_000 : 0
-          if (mountedRef.current) {
-            setWallet({ address: accounts[0], balance, connected: true, connecting: false })
+        let address: string | null = null
+        if (Array.isArray(accounts) && accounts.length > 0) {
+          if (saved && accounts[0] === saved.address) {
+            address = accounts[0]
+          } else if (!saved) {
+            address = accounts[0]
           }
-          await fetchKrc20()
-          return null
         }
-      } catch { /* ignore */ }
+        if (!address) return
 
-      return saved
+        const balance = await refreshWalletBalance(address)
+        if (cancelled) return
+        if (mountedRef.current) {
+          setWallet({ address, balance, connected: true, connecting: false })
+        }
+        void fetchKrc20()
+      } catch {
+        /* wallet locked / not authorized — stay disconnected */
+      }
     }
 
     const init = async () => {
-      const saved = await restoreSession()
+      // Fast single resolve (cached, shared with every other caller).
+      const p = await getProvider()
       if (cancelled) return
 
-      const found = await waitForProvider(4000)
-      if (cancelled) return
-
-      if (mountedRef.current) setKaswareDetected(found)
-
-      if (found) {
-        const ver = getKasWareVersion()
-        if (mountedRef.current) setKaswareVersion(ver)
-
-        if (!saved) {
-          try {
-            const p = await ensureProvider()
-            const accounts = await p.getAccounts()
-            if (accounts && accounts.length > 0 && mountedRef.current) {
-              const balance = await refreshWalletBalance(accounts[0])
-              if (mountedRef.current) {
-                setWallet({ address: accounts[0], balance, connected: true, connecting: false })
-              }
-              await fetchKrc20()
-            }
-          } catch { /* not connected */ }
-        }
+      if (mountedRef.current) {
+        setKaswareDetected(!!p)
+        setKaswareVersion(getKasWareVersion())
+        setDetecting(false)
       }
 
-      if (cancelled) return
-      if (mountedRef.current) setDetecting(false)
+      if (p) {
+        await silentlyConnect(p)
+        return
+      }
+
+      // Extension injecting slowly: keep the pill in sync WITHOUT blocking the UI,
+      // then auto-connect once it turns up. Worst case ~1.5s for the first state.
+      void awaitProviderLate(8000).then((late) => {
+        if (cancelled || !late) return
+        if (mountedRef.current) {
+          setKaswareDetected(true)
+          setKaswareVersion(getKasWareVersion())
+        }
+        void silentlyConnect(late)
+      }).catch(() => {})
     }
 
     init()

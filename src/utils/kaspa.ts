@@ -31,7 +31,7 @@ export function clearSession(): void {
   } catch { /* noop */ }
 }
 
-export async function tryRestoreProvider(timeout = 2000): Promise<KasWareProvider | null> {
+export async function tryRestoreProvider(timeout = 1200): Promise<KasWareProvider | null> {
   try {
     if (detectKasWare()) return resolveProvider()
     const found = await waitForProvider(timeout)
@@ -49,7 +49,49 @@ export function detectKasWare(): boolean {
   return false
 }
 
-export function waitForProvider(timeout = 4000): Promise<boolean> {
+let _detectPromise: Promise<KasWareProvider | null> | null = null
+
+/**
+ * Resolves the injected wallet provider ONCE (then caches it) so every consumer —
+ * the app boot, session restore, swap signing, subscribe flows — shares a single
+ * short detection instead of each one re-polling for seconds. `force=true` clears
+ * the cache for a fresh attempt (e.g. the user installs the extension after first load).
+ */
+export function getProvider(force = false): Promise<KasWareProvider | null> {
+  if (!force && _detectPromise) return _detectPromise
+  _detectPromise = (async () => {
+    const found = await waitForProvider()
+    if (!found) return null
+    const p = resolveProvider()
+    if (p) {
+      try {
+        _kaswareVersion = await p.getVersion()
+      } catch { /* ignore */ }
+    }
+    return p
+  })()
+  return _detectPromise
+}
+
+/**
+ * Like `getProvider` but keeps polling in the background after the fast path ends,
+ * notifying once via an optional callback if a provider turns up late. Used so a
+ * slow-injecting extension flips the "KasWare detected" pill without blocking UI.
+ */
+export async function awaitProviderLate(timeout = 8000): Promise<KasWareProvider | null> {
+  const p = await getProvider()
+  if (p) return p
+  if ((await waitForProvider(timeout)) === false) return null
+  const late = resolveProvider()
+  if (late) {
+    try { _kaswareVersion = await late.getVersion() } catch { /* ignore */ }
+    // keep the shared cache primed
+    _detectPromise = Promise.resolve(late)
+  }
+  return late
+}
+
+export function waitForProvider(timeout = 1500): Promise<boolean> {
   const promise = new Promise<boolean>((resolve) => {
     // fast path: already injected
     if (detectKasWare()) {
@@ -66,7 +108,7 @@ export function waitForProvider(timeout = 4000): Promise<boolean> {
         resolve(false)
         return
       }
-      setTimeout(check, 200)
+      setTimeout(check, 100)
     }
     check()
   })
@@ -138,13 +180,9 @@ function resolveProvider(): KasWareProvider | null {
 }
 
 export async function ensureProvider(): Promise<KasWareProvider> {
-  const found = await waitForProvider()
-  if (!found) throw new Error("KasWare wallet extension not detected")
-  const p = resolveProvider()
+  let p = await getProvider()
+  if (!p) p = await getProvider(true) // one forced fresh attempt (covers late injection)
   if (!p) throw new Error("KasWare wallet extension not detected")
-  try {
-    _kaswareVersion = await p.getVersion()
-  } catch { /* ignore */ }
   return p
 }
 
