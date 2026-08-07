@@ -149,8 +149,19 @@ export default function AetherisSwap() {
                 }
               })()
       ;(window as any).__lastSwapError = err instanceof Error ? `${err.message}\n${err.stack}` : String(detail)
-      console.error("[swap fail]", err)
-      toast.error((detail || "Swap failed").slice(0, 500))
+      let diag = ""
+      try {
+        const w = window as any
+        diag =
+          "\n\n[debug]" +
+          "\n__bundleId: " + String(w.__bundleId ?? "?") +
+          "\n__lastCovidError: " + JSON.stringify(w.__lastCovidError ?? null) +
+          "\n__lastAssembleSpendOutputs: " + JSON.stringify(w.__lastAssembleSpendOutputs ?? null) +
+          "\n__lastAssembleFunding: " + JSON.stringify(w.__lastAssembleFunding ?? null) +
+          "\n__lastAssembleChangeAddress: " + JSON.stringify(w.__lastAssembleChangeAddress ?? null)
+      } catch { /* noop */ }
+      console.error("[swap fail]", err, diag)
+      toast.error((detail || "Swap failed").slice(0, 500) + diag.slice(0, 2000))
     } finally {
       setSwapping(false)
     }
