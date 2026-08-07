@@ -1092,19 +1092,22 @@ KRON_UPSTREAM = {
 }
 
 
-@app.api_route("/kron/{service}/{relay_path:path}", methods=["GET"])
+@app.api_route("/kron/{service}/{relay_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def kron_relay(service: str, relay_path: str, request: Request):
     base = KRON_UPSTREAM.get(service)
     if not base:
         raise HTTPException(404, f"unknown kron relay service {service!r}")
     url = f"{base}/{relay_path}"
+    body = await request.body()
     if request.query_params:
         url += "?" + urlencode(list(request.query_params.items()))
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
-            upstream = await client.get(
+            upstream = await client.request(
+                request.method,
                 url,
                 headers={"user-agent": "Mozilla/5.0 (Aetheris HF relay)"},
+                content=body,
             )
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"kron relay {service} error: {exc}")

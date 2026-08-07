@@ -815,25 +815,51 @@ export async function fundingEntriesFromWallet(
 /** Sign the P2PK funding inputs via the wallet, then submit (wallet pushTx → node wRPC). */
 export async function signAndSubmit(bridge: WalletBridge, pskt: AssembledResult["pskt"]): Promise<string> {
   const signed = await bridge.signPskt(pskt.txJsonString, pskt.signInputs)
-  const txid = await submitSigned(signed)
+  const txid = await submitSigned(signed, undefined, pskt.txJsonString)
   return txid
 }
 
-/** Submit a signed tx JSON — via the wallet's `pushTx` if available, else the node wRPC. */
-export async function submitSigned(txJsonString: string, rpc?: RpcClient): Promise<string> {
+/**
+ * Submit a signed tx JSON — via the wallet's `pushTx` if available, else the node wRPC.
+ * The wallet returns its OWN safe-JSON schema for covenant outputs; a different Kaspa build
+ * may re-serialize it in a shape our vendored wasm can't parse. When that happens we never
+ * feed the wallet's JSON to our deserializer: we merge ONLY the `signatureScript` hex from
+ * the wallet's output into our ORIGINAL (pre-sign) JSON — which our wasm parses — and submit
+ * that via wRPC. The signature script is plain hex data in every schema, so the merge is
+ * version-agnostic.
+ */
+export async function submitSigned(txJsonString: string, rpc?: RpcClient, originalUnsignedJson?: string): Promise<string> {
   const w = (window as any).kasware
   if (w?.pushTx) {
     try {
       const txid = await w.pushTx(txJsonString, 0)
       if (txid) return txid
-    } catch {
+    } catch (e: any) {
+      try {
+        ;(window as any).__lastPushTxError = e instanceof Error ? `${e.message}\n${e.stack}` : String(e)
+      } catch { /* noop */ }
       /* fall through to wRPC */
     }
   }
   const r = rpc ?? (await getRpc())
   const k = await getKaspa()
   try {
-    const tx = k.Transaction.deserializeFromSafeJSON(txJsonString)
+    let json = txJsonString
+    if (originalUnsignedJson) {
+      const signedObj = JSON.parse(txJsonString)
+      const unsignedObj = JSON.parse(originalUnsignedJson)
+      for (const si of signedObj.inputs ?? []) {
+        const idx = typeof si?.index === "number" ? si.index : -1
+        if (idx >= 0 && unsignedObj.inputs?.[idx] && typeof si?.signatureScript === "string" && si.signatureScript) {
+          unsignedObj.inputs[idx] = { ...unsignedObj.inputs[idx], signatureScript: si.signatureScript }
+        }
+      }
+      json = JSON.stringify(unsignedObj)
+      try {
+        ;(window as any).__lastMergedSubmitJson = json
+      } catch { /* noop */ }
+    }
+    const tx = k.Transaction.deserializeFromSafeJSON(json)
     const res = await r.submitTransaction({ transaction: tx })
     return res.transactionId
   } catch (e: any) {
