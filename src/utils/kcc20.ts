@@ -2,6 +2,12 @@ import * as kron from "@kronsdk/kron-sdk"
 import { loadKaspa, type Kaspa } from "@kronsdk/kron-sdk/wasm"
 import type { TokenInfo } from "../types"
 
+/**
+ * The browser wasm loader accepts an optional `wasmUrl`; the package's node type
+ * surface (what tsc sees) declares no args — widen it so we can pin the CDN URL.
+ */
+const loadKaspaBrowser = loadKaspa as (wasmUrl?: string | URL) => Promise<Kaspa>
+
 type RpcClient = InstanceType<Kaspa["RpcClient"]>
 
 /**
@@ -32,10 +38,38 @@ const FEE_RATE = 100
 const PARTNER_REF = "kaspadex"
 const DEFAULT_DECIMALS = 8
 
+/**
+ * Kaspa WASM SDK (11.5MB) served from GitHub jsDelivr CDN instead of the slow HF
+ * static origin — the SDK's built-in 30s timeout was being hit on cold loads.
+ * Mirror lives at tag `kaspa-wasm` (origin/master only; never pushed to HF).
+ * Must stay in lockstep with @kronsdk/kron-sdk's bundled kaspa_bg.wasm.
+ */
+const KASPA_WASM_URL =
+  "https://cdn.jsdelivr.net/gh/gauravsengar24/kaspa-dex@kaspa-wasm/vendor/kaspa_bg.wasm"
+const WASM_MAX_ATTEMPTS = 3
+
 let _kaspaPromise: Promise<Kaspa> | null = null
-export function getKaspa(): Promise<Kaspa> {
-  _kaspaPromise ??= loadKaspa()
-  return _kaspaPromise
+export async function getKaspa(): Promise<Kaspa> {
+  if (_kaspaPromise) return _kaspaPromise
+  let lastErr: unknown = null
+  for (let attempt = 0; attempt < WASM_MAX_ATTEMPTS; attempt++) {
+    try {
+      _kaspaPromise = loadKaspaBrowser(KASPA_WASM_URL)
+      return await _kaspaPromise
+    } catch (err) {
+      lastErr = err
+      _kaspaPromise = null
+      if (attempt < WASM_MAX_ATTEMPTS - 1) {
+        await new Promise((r) => setTimeout(r, 700 * (attempt + 1)))
+      }
+    }
+  }
+  throw lastErr
+}
+
+/** Warm-load the Kaspa WASM in the background (idempotent, non-blocking). */
+export function warmKaspaWasm(): void {
+  getKaspa().catch(() => undefined)
 }
 
 let _rpc: RpcClient | null = null
@@ -269,7 +303,9 @@ export async function getBalances(address: string): Promise<Kcc20Balance[]> {
  *  and are merged here so quotes are correct (docs/INTEGRATION.md §4). */
 export async function getToken(tick: string): Promise<Kcc20Token | null> {
   try {
-    const t = await indexer().token(tick.toLowerCase())
+    const res = await indexer().token(tick.toLowerCase())
+    const t = Array.isArray(res) ? res[0] : res
+    if (!t) return null
     const live = t.cpState as unknown as CurveState
     let baked: CurveState | null = null
     if (_marketCache) {
