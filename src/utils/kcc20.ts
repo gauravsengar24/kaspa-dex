@@ -721,9 +721,22 @@ export function walletBridge(): WalletBridge | null {
       if (bytes.length === 32) return hex
       throw new Error(`KasWare getPublicKey returned ${bytes.length} bytes (expected a 32/33/65-byte secp256k1 key)`)
     },
-    signPskt: async (txJsonString, signInputs) =>
-      w.signPskt({ txJsonString, options: { signInputs } }),
-    getUtxoEntries: w.getUtxoEntries,
+    signPskt: async (txJsonString, signInputs) => {
+      try {
+        return await w.signPskt({ txJsonString, options: { signInputs } })
+      } catch (e: any) {
+        const detail = e instanceof Error ? e.message : typeof e === "string" ? e : safeStringify(e)
+        throw new Error(`KasWare rejected the swap signature: ${detail}`)
+      }
+    },
+    getUtxoEntries: async (address: string) => {
+      try {
+        return await w.getUtxoEntries(address)
+      } catch (e: any) {
+        const detail = e instanceof Error ? e.message : typeof e === "string" ? e : safeStringify(e)
+        throw new Error(`KasWare getUtxoEntries failed: ${detail}`)
+      }
+    },
     pushTx: w.pushTx,
   }
 }
@@ -1252,6 +1265,16 @@ export async function swapTokenForKas(
 /* ---------------------------------------------------------------------------
  * Utils
  * ------------------------------------------------------------------------- */
+
+function safeStringify(e: unknown): string {
+  if (e == null) return "null"
+  try {
+    const s = JSON.stringify(e)
+    return s && s.length < 400 ? s : s?.slice(0, 400) ?? String(e)
+  } catch {
+    return String(e)
+  }
+}
 
 export function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)

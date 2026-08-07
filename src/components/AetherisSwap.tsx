@@ -136,7 +136,21 @@ export default function AetherisSwap() {
       setAmount("")
       setKccQuote(null)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Swap failed")
+      const detail =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : (() => {
+                try {
+                  return JSON.stringify(err ?? null)
+                } catch {
+                  return String(err)
+                }
+              })()
+      ;(window as any).__lastSwapError = err instanceof Error ? `${err.message}\n${err.stack}` : String(detail)
+      console.error("[swap fail]", err)
+      toast.error((detail || "Swap failed").slice(0, 500))
     } finally {
       setSwapping(false)
     }
