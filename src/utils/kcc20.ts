@@ -726,6 +726,11 @@ export function walletBridge(): WalletBridge | null {
         return await w.signPskt({ txJsonString, options: { signInputs } })
       } catch (e: any) {
         const detail = e instanceof Error ? e.message : typeof e === "string" ? e : safeStringify(e)
+        try {
+          ;(window as any).__lastSwapTxJson = txJsonString
+          ;(window as any).__lastSwapTxSignInputs = JSON.stringify(signInputs)
+          ;(window as any).__lastSwapWalletVersion = String(((window as any).kasware as any)?.version?.() ?? (window as any).kasware?.version ?? "unknown")
+        } catch { /* noop */ }
         throw new Error(`KasWare rejected the swap signature: ${detail}`)
       }
     },
@@ -827,9 +832,16 @@ export async function submitSigned(txJsonString: string, rpc?: RpcClient): Promi
   }
   const r = rpc ?? (await getRpc())
   const k = await getKaspa()
-  const tx = k.Transaction.deserializeFromSafeJSON(txJsonString)
-  const res = await r.submitTransaction({ transaction: tx })
-  return res.transactionId
+  try {
+    const tx = k.Transaction.deserializeFromSafeJSON(txJsonString)
+    const res = await r.submitTransaction({ transaction: tx })
+    return res.transactionId
+  } catch (e: any) {
+    try {
+      ;(window as any).__lastSubmitTxJson = txJsonString
+    } catch { /* noop */ }
+    throw e
+  }
 }
 
 /* ---------------------------------------------------------------------------
