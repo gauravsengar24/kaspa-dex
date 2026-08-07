@@ -438,6 +438,9 @@ async function getTokenFromKascov(tick: string): Promise<Kcc20Token | null> {
     graduationKas: p.graduation_kas_sompi ?? baked?.graduationKas ?? 0,
   } as CurveState
   const price = m.spot_num_sompi && m.spot_den ? m.spot_num_sompi / SOMPI_PER_KAS / m.spot_den : undefined
+  covidBytesStrict(entry, "covenantId")
+  covidBytesStrict(entry.extensions, "curveCovenantId")
+  covidBytesStrict(entry.extensions, "poolCovenantId")
   return {
     tick: entry.symbol,
     name: entry.name,
@@ -505,6 +508,9 @@ export async function getToken(tick: string): Promise<Kcc20Token | null> {
       } catch { /* keep null */ }
     }
     const merged: CurveState = { ...(baked ?? {}), ...live }
+    covidBytesStrict(t, "covenantId")
+    covidBytesStrict(t, "curveCovenantId")
+    covidBytesStrict(t, "poolCovenantId")
     return {
       tick: t.tick,
       name: t.name,
@@ -569,6 +575,7 @@ async function poolParams(tick: string, s: CurveState | null) {
   try {
     const idx = indexer()
     const head = await idx.poolhead(tick.toLowerCase())
+    covidBytesStrict(head.reserves, "lpCovid")
     reserves = head.reserves
     state = {
       kasReserve: BigInt(head.reserves.kasReserve),
@@ -585,6 +592,7 @@ async function poolParams(tick: string, s: CurveState | null) {
     const row = rows.find((r) => (r.market.program.token_covenant_id ?? "") === entry?.covenantId)
     const p = row?.market?.program
     if (!p) throw new Error(`no pool state for ${tick}`)
+    covidBytesStrict(p, "lp_token_covenant_id")
     reserves = {
       kasReserve: String(p.kas_reserve_sompi ?? 0),
       tokenReserve: String(p.token_reserve ?? 0),
@@ -756,34 +764,114 @@ export interface AssembledResult {
 }
 
 /**
- * The canonical sequence (docs/INTEGRATION.md §5): assemble with a GUESS fee, size the
- * real fee against that assembly, RE-ASSEMBLE with the real fee (the change output's
- * value changes every funding input's sighash — only this second assembly may be signed).
+ * Debug instrumentation (bundle identity + assemble diagnostics).
+ * `__bundleId` resolves to the built chunk URL (e.g. .../assets/index-XXXX.js) so we
+ * can prove which deploy a browser is actually running — stale-cache mismatches
+ * (the `new zv` vs `new np` class-name discrepancy) are the current prime suspect.
  */
+if (typeof window !== "undefined") {
+  try {
+    const w = window as unknown as Record<string, unknown>
+    if (!w.__bundleId) w.__bundleId = import.meta.url
+  } catch {
+    /* non-module context: keep undefined */
+  }
+}
+
+const COVID_RE = /^[0-9a-fA-F]{64}$/
+
+/**
+ * Strict 64-hex covid/covenant-id validator. The whole error chain
+ * ("Error converting property 'covenant': Slice must have the length of Hash")
+ * traces back to an ODD-LENGTH hex id: `hexToBytes` silently drops the trailing
+ * char (63→31 bytes), `hexOf3` serializes back to 62 chars, and the assembled
+ * binding's Hash fails. Fail loud + capture instead of corrupting silently. */
+export function covidBytesStrict(tok: unknown, field: string): Uint8Array {
+  const v = (tok as any)?.[field]
+  if (v == null || v === "") return new Uint8Array()
+  if (typeof v !== "string" || !COVID_RE.test(v)) {
+    try {
+      ;(window as any).__lastCovidError = {
+        field,
+        value: String(v),
+        len: String(v).length,
+        bundleId: (window as any).__bundleId,
+        at: new Date().toISOString(),
+      }
+    } catch {
+      /* noop */
+    }
+    throw new Error(
+      `KCC-20 abort: ${field} is not a 64-char hex covenant id (got ${String(v).length} chars: ${v})`,
+    )
+  }
+  return hexToBytes(v)
+}
+
+/** Capture the pre-assemble `spend` for diagnosis when assembly throws. */
+function captureSpendForDebug(
+  spend: kron.spend.CovenantSpend,
+  fundingEntries: kron.spend.FundingEntry[],
+  changeAddress: string,
+): void {
+  try {
+    const w = window as unknown as Record<string, unknown>
+    w.__lastAssembleSpendOutputs = (spend.outputs ?? []).map((o: any, i: number) => ({
+      i,
+      value: String(o?.value ?? ""),
+      hasBinding: !!o?.binding,
+      bindingAuthorizingInput: o?.binding?.authorizingInput ?? null,
+      covid: o?.binding?.covid ?? null,
+      covidLen: typeof o?.binding?.covid === "string" ? o.binding.covid.length : null,
+      isPlainObject: o != null && typeof o === "object" && (o.constructor?.name ?? "?") === "Object",
+    }))
+    w.__lastAssembleFunding = (fundingEntries ?? []).map((f: any, i: number) => ({
+      i,
+      amount: String(f?.amount ?? null),
+      spkType: f?.scriptPublicKey?.constructor?.name ?? typeof f?.scriptPublicKey,
+    }))
+    w.__lastAssembleChangeAddress = changeAddress
+    w.__lastAssembleAt = new Date().toISOString()
+  } catch {
+    /* diagnostics must never break the swap */
+  }
+}
+
 export async function assembleAndSize(
   spend: kron.spend.CovenantSpend,
   fundingEntries: kron.spend.FundingEntry[],
   changeAddress: string,
   ref = PARTNER_REF,
 ): Promise<AssembledResult> {
+  captureSpendForDebug(spend, fundingEntries, changeAddress)
   const k = await getKaspa()
-  let asm = kron.spend.assembleNativeTx(k, {
-    spend,
-    fundingEntries,
-    changeAddress,
-    networkFee: 10_000n,
-    ref,
-  })
-  const networkFee = kron.spend.estimateNativeFee(k, NETWORK_ID, asm, FEE_RATE)
-  asm = kron.spend.assembleNativeTx(k, {
-    spend,
-    fundingEntries,
-    changeAddress,
-    networkFee,
-    ref,
-  })
-  const pskt = kron.spend.toPsktJson(asm)
-  return { asm, pskt, networkFee }
+  try {
+    let asm = kron.spend.assembleNativeTx(k, {
+      spend,
+      fundingEntries,
+      changeAddress,
+      networkFee: 10_000n,
+      ref,
+    })
+    const networkFee = kron.spend.estimateNativeFee(k, NETWORK_ID, asm, FEE_RATE)
+    asm = kron.spend.assembleNativeTx(k, {
+      spend,
+      fundingEntries,
+      changeAddress,
+      networkFee,
+      ref,
+    })
+    const pskt = kron.spend.toPsktJson(asm)
+    return { asm, pskt, networkFee }
+  } catch (err) {
+    try {
+      ;(window as unknown as Record<string, unknown>).__lastAssembleError =
+        err instanceof Error ? `${err.message}\n${err.stack}` : String(err)
+    } catch {
+      /* noop */
+    }
+    throw err
+  }
 }
 
 /** Funding entries from the wallet's own P2PK UTXOs (largest first, capped count).
@@ -1138,6 +1226,7 @@ async function livePool(tick: string, tok: Kcc20Token) {
   try {
     const head = await seq.head(tok.poolCovenantId ?? "")
     if (head.head) {
+      covidBytesStrict(head.head.reserves, "lpCovid")
       reserves = {
         ...reserves,
         realKas: Number(head.head.reserves.kasReserve),
@@ -1170,6 +1259,7 @@ async function livePool(tick: string, tok: Kcc20Token) {
     try {
       const idx = indexer()
       const head = await idx.poolhead(tick.toLowerCase())
+      covidBytesStrict(head.reserves, "lpCovid")
       pool = {
         transactionId: head.pool.transactionId,
         index: head.pool.index,
