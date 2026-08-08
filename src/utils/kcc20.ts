@@ -1246,21 +1246,53 @@ async function liveCurve(tick: string, tok: Kcc20Token) {
 
   if (!curveUtxo || !inventory) {
     // Indexer fallback: derive the two covenant addresses from live state + retry (5× 1.5s).
-    const reserveState: kron.curveCp.CpCurveState = {
-      graduated: false,
-      tokenCovid: tokenCovidBytes,
-      tokenReserve: BigInt(s.tokenReserve ?? 0),
-    }
-    const curveAddr = kron.curveCp.cpAddress(k, templates.curve, reserveState, NETWORK_ID)
+    // NOTE: the indexer's cpState may lag a few trades behind the node's accepted curve head, so
+    // locating the *live* curve is a two-step: query the derived address for the current row, then
+    // scan a bounded window of reserve candidates when the node reports no UTXO there.
+    const base = BigInt(s.tokenReserve ?? 0)
     const rpc = await getRpc()
-    const curveLookup = await rpc.getUtxosByAddresses({ addresses: [curveAddr] })
-    const curveEntry = curveLookup.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
-    if (!curveEntry) throw new Error("Could not locate the live curve UTXO — retry in a moment")
+    const findEntry = async (reserve: bigint) => {
+      const state: kron.curveCp.CpCurveState = {
+        graduated: false,
+        tokenCovid: tokenCovidBytes,
+        tokenReserve: reserve,
+      }
+      const addr = kron.curveCp.cpAddress(k, templates.curve, state, NETWORK_ID)
+      const hit = await rpc.getUtxosByAddresses({ addresses: [addr] })
+      const entry = hit.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
+      return entry ? { entry, state } : null
+    }
+    let fresh = await findEntry(base)
+    if (!fresh) {
+      // The indexer row is a few trades behind; curve trades move the reserve by the traded
+      // token amount, so scan a bounded window of reserve candidates — batched 500 addresses
+      // per node lookup — for the address that actually holds the live covenant UTXO.
+      const windowScan = async (lo: bigint, hi: bigint) => {
+        const candidates: { state: kron.curveCp.CpCurveState; addr: string }[] = []
+        for (let r = lo; r <= hi; r += 1n) {
+          if (r <= 0n) continue
+          const state: kron.curveCp.CpCurveState = { graduated: false, tokenCovid: tokenCovidBytes, tokenReserve: r }
+          candidates.push({ state, addr: kron.curveCp.cpAddress(k, templates.curve, state, NETWORK_ID) })
+        }
+        for (let i = 0; i < candidates.length; i += 500) {
+          const chunk = candidates.slice(i, i + 500)
+          const lookup = await rpc.getUtxosByAddresses({ addresses: chunk.map((c) => c.addr) })
+          const entry = lookup.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
+          if (!entry) continue
+          const match = chunk.find((c) => c.addr === entry.address?.toString()) ?? chunk[0]
+          return { entry, state: match.state }
+        }
+        return null
+      }
+      fresh = (await windowScan(base - 20000n, base - 1n)) ?? (await windowScan(base + 1n, base + 20000n))
+    }
+    if (!fresh) throw new Error("Could not locate the live curve UTXO — retry in a moment")
+    const { entry: curveEntry, state: curveState } = fresh
     const curveValue = BigInt(curveEntry.amount ?? 0)
-    curveUtxo = { transactionId: curveEntry.outpoint.transactionId, index: curveEntry.outpoint.index, realKas: curveValue, state: reserveState }
+    curveUtxo = { transactionId: curveEntry.outpoint.transactionId, index: curveEntry.outpoint.index, realKas: curveValue, state: curveState }
     // The curve's token inventory is a KCC-20 UTXO covenant-owned by the curve covid (the owner branch, not the minter branch);
     // its native value is the token carrier — read it, don't assume. Look it up among the curve's outputs.
-    const tokenAmount = BigInt(s.tokenReserve ?? 0)
+    const tokenAmount = curveState.tokenReserve
     const inventoryAddr = kron.kcc20.kcc20Address(k, templates.token, kron.kcc20.covenantIdOwned(curveCovidBytes, tokenAmount, false), NETWORK_ID)
     const invLookup = await rpc.getUtxosByAddresses({ addresses: [inventoryAddr] })
     const invEntry = invLookup.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
