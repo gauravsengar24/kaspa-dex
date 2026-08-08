@@ -930,6 +930,90 @@ function captureWrappedOutputsForDebug(spend: kron.spend.CovenantSpend, k: Kaspa
   }
 }
 
+/**
+ * Browser-safe replacement for `kron.spend.assembleNativeTx`.
+ *
+ * The SDK wrapper feeds `new Transaction({ outputs: [new TransactionOutput(.., new CovenantBinding(.., new Hash(..)))] })`
+ * to the wasm. The browser glue's JS→Rust converter reads the covenant of INSTANCE outputs
+ * through the instance's `covenantId` getter and hits "Slice must have the length of Hash"
+ * (it re-slices the hex string of the instance, length 64 ≠ 32). The SAME converter accepts
+ * PLAIN descriptor objects with the covenant as `{ authorizingInput, covenantId: "<64-hex>" }`
+ * (proven in-browser via __covShapeProbe: plainHex OK / plainBytes OK / instances FAIL).
+ * We therefore rebuild the assembly with plain covenants and drop in the change output,
+ * keeping every other element (signatureScripts, utxos, fundingInputIndexes, payload) identical.
+ */
+function assembleNativeTxSafe(
+  k: Kaspa,
+  spend: kron.spend.CovenantSpend,
+  fundingEntries: kron.spend.FundingEntry[],
+  changeAddress: string,
+  networkFee: bigint,
+  ref = PARTNER_REF,
+): kron.spend.AssembledNativeTx {
+  const computeBudgetOf = (role?: string): number => (role === "curve" || role === "pool" ? 400 : 100)
+  const inputs = spend.inputs.map((E: any) =>
+    new k.TransactionInput({
+      previousOutpoint: { transactionId: E.transactionId, index: E.index } as any,
+      signatureScript: E.signatureScript,
+      sequence: 0n,
+      sigOpCount: 0,
+      computeBudget: E.computeBudget ?? computeBudgetOf(E.role),
+      utxo: {
+        outpoint: { transactionId: E.transactionId, index: E.index } as any,
+        amount: E.value,
+        scriptPublicKey: E.scriptPublicKey,
+        blockDaaScore: 0n,
+        isCoinbase: false,
+      } as any,
+    }),
+  )
+  let fundingInputIndex = inputs.length
+  const fundingInputs = fundingEntries.map((E: any) =>
+    new k.TransactionInput({
+      previousOutpoint: E.outpoint,
+      signatureScript: "",
+      sequence: 0n,
+      sigOpCount: 0,
+      computeBudget: 10,
+      utxo: E,
+    }),
+  )
+  const totalIn = spend.inputs.reduce((a: bigint, i: any) => a + BigInt(i.value), 0n) +
+    fundingEntries.reduce((a: bigint, f: any) => a + BigInt(f.amount), 0n)
+  const covenantOut = spend.outputs.reduce((a: bigint, o: any) => a + BigInt(o.value), 0n)
+  const change = totalIn - covenantOut - networkFee
+  if (change < 0n) throw new Error(`Insufficient funding: need ${covenantOut + networkFee} sompi, have ${totalIn}`)
+  const outputs: any[] = spend.outputs.map((o: any) =>
+    o?.binding
+      ? { value: o.value, scriptPublicKey: o.scriptPublicKey, covenant: { authorizingInput: o.binding.authorizingInput, covenantId: o.binding.covid } }
+      : { value: o.value, scriptPublicKey: o.scriptPublicKey },
+  )
+  outputs.push({ value: change, scriptPublicKey: k.payToAddressScript(changeAddress) })
+  const transaction = new k.Transaction({
+    version: 1,
+    inputs: [...inputs, ...fundingInputs],
+    outputs,
+    lockTime: 0n,
+    gas: 0n,
+    payload: encodePartnerTagHex(ref),
+    subnetworkId: ZERO_SUBNETWORK_ID,
+  })
+  return {
+    transaction,
+    fundingInputIndexes: fundingInputs.map((_, idx) => fundingInputIndex + idx),
+    totalIn,
+    covenantOut,
+    change,
+  } as unknown as kron.spend.AssembledNativeTx
+}
+
+const ZERO_SUBNETWORK_ID = "0000000000000000000000000000000000000000"
+
+function encodePartnerTagHex(ref: string): string {
+  const utf8 = new TextEncoder().encode(`kron:r:${ref.toLowerCase().trim()}`)
+  return Array.from(utf8, (b) => b.toString(16).padStart(2, "0")).join("")
+}
+
 export async function assembleAndSize(
   spend: kron.spend.CovenantSpend,
   fundingEntries: kron.spend.FundingEntry[],
@@ -939,22 +1023,10 @@ export async function assembleAndSize(
   captureSpendForDebug(spend, fundingEntries, changeAddress)
   const k = await getKaspa()
   captureWrappedOutputsForDebug(spend, k)
-  try {
-    let asm = kron.spend.assembleNativeTx(k, {
-      spend,
-      fundingEntries,
-      changeAddress,
-      networkFee: 10_000n,
-      ref,
-    })
+try {
+    let asm = assembleNativeTxSafe(k, spend, fundingEntries, changeAddress, 10_000n, ref)
     const networkFee = kron.spend.estimateNativeFee(k, NETWORK_ID, asm, FEE_RATE)
-    asm = kron.spend.assembleNativeTx(k, {
-      spend,
-      fundingEntries,
-      changeAddress,
-      networkFee,
-      ref,
-    })
+    asm = assembleNativeTxSafe(k, spend, fundingEntries, changeAddress, networkFee, ref)
     const pskt = kron.spend.toPsktJson(asm)
     return { asm, pskt, networkFee }
   } catch (err) {
