@@ -1146,7 +1146,7 @@ export async function transfer(
 
   const tok = await getToken(tick)
   if (!tok) throw new Error(`Token ${tick} not found`)
-  const decimals = tok.decimals || DEFAULT_DECIMALS
+  const decimals = tok.decimals ?? DEFAULT_DECIMALS
 
   const sendAmount = BigInt(Math.round(amount * Math.pow(10, decimals)))
   if (sendAmount <= 0n) throw new Error("Amount must be positive")
@@ -1330,7 +1330,7 @@ export async function sellOnCurve(
   const tok = await getToken(tick)
   if (!tok || !tok.cpState) throw new Error(`Token ${tick} has no live state`)
   if (tok.graduated) throw new Error(`${tick} has graduated — use a pool swap`)
-  const decimals = tok.decimals || DEFAULT_DECIMALS
+  const decimals = tok.decimals ?? DEFAULT_DECIMALS
   const tokenIn = BigInt(Math.round(tokenAmount * Math.pow(10, decimals)))
 
   const q = await quoteSell(tick, tokenAmount)
@@ -1530,7 +1530,7 @@ export async function swapTokenForKas(
   const tok = await getToken(tick)
   if (!tok) throw new Error(`Token ${tick} not found`)
   if (!tok.graduated || !tok.poolCovenantId) throw new Error(`${tick} has not graduated — use the curve`)
-  const decimals = tok.decimals || DEFAULT_DECIMALS
+  const decimals = tok.decimals ?? DEFAULT_DECIMALS
   const tokenIn = BigInt(Math.round(tokenAmount * Math.pow(10, decimals)))
 
   const q = await quoteSell(tick, tokenAmount)
