@@ -1343,19 +1343,25 @@ export async function sellOnCurve(
   if (!utxos.length) throw new Error(`No ${tick.toUpperCase()} UTXOs at this address`)
   const decoded = utxos.map((u) => ({ utxo: u, ...kron.kcc20.decodeKcc20Redeem(hexToBytes(u.redeemScriptHex)) }))
   decoded.sort((a, b) => (a.state.amount < b.state.amount ? 1 : -1))
-  const picked = decoded.filter((d) => d.state.amount >= tokenIn)
-  const chosen = picked[0] ?? decoded[0]
+
+  // The covenant pays out of the wallet's token inputs — it needs seller inputs summing to >= tokenIn.
+  // Greedily use the largest UTXOs (change is handled by the contract when inputs exceed tokenIn).
+  const sellerTokens = []
+  let sellerIn = 0n
+  for (const d of decoded) {
+    if (sellerIn >= tokenIn) break
+    sellerTokens.push({
+      transactionId: d.utxo.outpoint.transactionId,
+      index: d.utxo.outpoint.index,
+      value: kron.spend.COVENANT_DUST,
+      state: d.state,
+    })
+    sellerIn += d.state.amount
+  }
+  if (sellerIn < tokenIn) throw new Error(`Insufficient ${tick.toUpperCase()} balance — ${tokenAmount} requested, ${Number(sellerIn) / Math.pow(10, decimals)} available`)
 
   const traderPub = hexToBytes(await bridge.getPublicKey())
-  const sellerTokens = [
-    {
-      transactionId: chosen.utxo.outpoint.transactionId,
-      index: chosen.utxo.outpoint.index,
-      value: kron.spend.COVENANT_DUST,
-      state: chosen.state,
-    },
-  ]
-  const presenceWitnessIdx = sellerTokens.length // [token 0, funding[0] = 1]
+  const presenceWitnessIdx = 2 + sellerTokens.length // [curve 0, inventory 1, tokens 2..2+N-1, funding[0] = 2+N]
   const spend = kron.curveCp.buildCpSell(
     k,
     templates.curve,
@@ -1534,18 +1540,25 @@ export async function swapTokenForKas(
   const utxos = await indexer().tokenUtxos(tick.toLowerCase(), address)
   if (!utxos.length) throw new Error(`No ${tick.toUpperCase()} UTXOs at this address`)
   const decoded = utxos.map((u) => ({ utxo: u, ...kron.kcc20.decodeKcc20Redeem(hexToBytes(u.redeemScriptHex)) }))
-  const chosen = decoded[0]
+  decoded.sort((a, b) => (a.state.amount < b.state.amount ? 1 : -1))
+
+  // Pack the largest token UTXOs until inputs cover tokenIn — the pool covenant pays out of these (change retained).
+  const traderTokens = []
+  let traderIn = 0n
+  for (const d of decoded) {
+    if (traderIn >= tokenIn) break
+    traderTokens.push({
+      transactionId: d.utxo.outpoint.transactionId,
+      index: d.utxo.outpoint.index,
+      value: kron.spend.COVENANT_DUST,
+      state: d.state,
+    })
+    traderIn += d.state.amount
+  }
+  if (traderIn < tokenIn) throw new Error(`Insufficient ${tick.toUpperCase()} balance — ${tokenAmount} requested, ${Number(traderIn) / Math.pow(10, decimals)} available`)
 
   const traderPub = hexToBytes(await bridge.getPublicKey())
-  const traderTokens = [
-    {
-      transactionId: chosen.utxo.outpoint.transactionId,
-      index: chosen.utxo.outpoint.index,
-      value: kron.spend.COVENANT_DUST,
-      state: chosen.state,
-    },
-  ]
-  const presenceWitnessIdx = traderTokens.length // [token 0, funding[0] = 1]
+  const presenceWitnessIdx = 2 + traderTokens.length // [pool 0, poolToken 1, tokens 2..2+N-1, funding[0] = 2+N]
   const spend = kron.poolCpV3.buildPoolV3SwapTokenForKas(
     k,
     templates.pool,
