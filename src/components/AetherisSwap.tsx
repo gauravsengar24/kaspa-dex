@@ -117,6 +117,17 @@ export default function AetherisSwap() {
   const kasUsdPrice = tokenPrice("KAS").usd || l1Info.kasUsd || 0.02
   const inAmt = Number(amount) || 0
 
+  const tokenUsdPrice = useCallback(
+    (ticker: string): number => {
+      if (ticker === "KAS") return kasUsdPrice
+      const hit = tokens.find((t) => t.tick === ticker)
+      if (hit?.price && hit.price > 0) return hit.price
+      return tokenPrice(ticker).usd ?? 0
+    },
+    [tokens, kasUsdPrice, tokenPrice],
+  )
+  const fromUsdValue = inAmt * tokenUsdPrice(from.ticker)
+
   const liveVol = livePools.reduce((s, p) => s + (p.volUsd || 0), 0)
   const liveTvl = livePools.reduce((s, p) => s + (p.tvlUsd || 0), 0)
   const liveActive = l1Info.activeCovenants ?? livePools.length
@@ -132,10 +143,11 @@ export default function AetherisSwap() {
   }, [kccQuote, quoteToken, kccToken, quoteAmt, amount, tokenToken, to.ticker])
 
   const out = estimatedOutput ?? 0
+  const toUsdValue = out > 0 ? out * tokenUsdPrice(to.ticker) : 0
   const rate =
     (out > 0 && inAmt > 0 ? out / inAmt : 0) || 1
   const minReceived = (out || inAmt) * (1 - slippage / 100)
-  const impact = useMemo(() => Math.min(4.8, (inAmt * kasUsdPrice) / 1_200_000), [inAmt, kasUsdPrice])
+  const impact = useMemo(() => Math.min(4.8, (inAmt * (tokenUsdPrice(from.ticker) || kasUsdPrice)) / 1_200_000), [inAmt, tokenUsdPrice, from.ticker, kasUsdPrice])
 
   const insufficientBalance =
     wallet.connected &&
@@ -331,7 +343,7 @@ export default function AetherisSwap() {
               label="From"
               value={amount}
               onChange={(v) => { setAmount(v); setKccQuote(null) }}
-              usd={fmt(inAmt * kasUsdPrice)}
+              usd={fmt(fromUsdValue)}
               token={{ symbol: from.ticker, color: "oklch(0.86 0.2 165)" }}
               onPickToken={() => setPicker("from")}
               balance={from.ticker === "KAS" ? fmt(Number(wallet.balanceRaw || 0)) : fmt(kccBalances[from.ticker] ?? 0)}
@@ -351,7 +363,7 @@ export default function AetherisSwap() {
               label="To"
               value={out > 0 ? fmt(out, 4) : ""}
               readOnly
-              usd={fmt(out * kasUsdPrice)}
+              usd={fmt(toUsdValue)}
               token={{ symbol: to.ticker, color: "oklch(0.51 0.26 293)" }}
               onPickToken={() => setPicker("to")}
               balance={to.ticker === "KAS" ? fmt(Number(wallet.balanceRaw || 0)) : fmt(kccBalances[to.ticker] ?? 0)}
