@@ -276,8 +276,12 @@ export async function fetchMarket(id: string): Promise<{ market: KascovMarket; r
 }
 
 /** GET /data/{network}/trades — admitted trades across all tokens (newest first). */
-export async function fetchTrades(opts: { limit?: number; marketId?: string } = {}): Promise<KascovTrade[]> {
-  const d = await getJson<Record<string, unknown>>("/trades", { limit: opts.limit ?? 40, market_id: opts.marketId ?? "" })
+export async function fetchTrades(opts: { limit?: number; marketId?: string; tokenId?: string } = {}): Promise<KascovTrade[]> {
+  const d = await getJson<Record<string, unknown>>("/trades", {
+    limit: opts.limit ?? 40,
+    market_id: opts.marketId ?? "",
+    token_id: opts.tokenId ?? "",
+  })
   return Array.isArray(d.trades) ? (d.trades as any[]).map(mapTrade) : []
 }
 

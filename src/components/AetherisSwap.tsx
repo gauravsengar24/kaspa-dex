@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { PageHeader } from "./aetheris/PageHeader"
 import { StatTile } from "./aetheris/StatTile"
 import { GlassCard, SectionLabel } from "./aetheris/GlassCard"
-import { PoolWheel } from "./aetheris/PoolWheel"
+import { LivePriceChart } from "./aetheris/LivePriceChart"
 import { DataTable, type Column } from "./aetheris/DataTable"
 import { Sparkline } from "./aetheris/Sparkline"
 import { ActionDialog } from "./aetheris/ActionDialog"
@@ -417,20 +417,12 @@ export default function AetherisSwap() {
         </GlassCard>
 
         <GlassCard className="col-span-12 lg:col-span-4">
-          <SectionLabel eyebrow="Weighted Pool" title="KAS · AETH · USDT" />
-          <PoolWheel />
-          <div className="mt-4 grid grid-cols-3 gap-2 font-mono text-[11px]">
-            {[
-              ["Fee tier", "0.30%"],
-              ["Invariant", "V2"],
-              ["Rebalance", "Auto"],
-            ].map(([k, v]) => (
-              <div key={k} className="rounded-lg border border-border/50 px-2 py-1.5">
-                <div className="text-muted-foreground">{k}</div>
-                <div className="text-foreground">{v}</div>
-              </div>
-            ))}
-          </div>
+          <SectionLabel eyebrow="Live price" title={`${from.ticker} / ${to.ticker}`} right={<ArrowUpRight className="h-4 w-4 text-muted-foreground" />} />
+          <LivePriceChart
+            token={tokens.find((t) => t.tick === (to.ticker === "KAS" ? from.ticker : to.ticker)) ?? null}
+            pairLabel={tokenToken ? `${from.ticker} → KAS → ${to.ticker}` : `${to.ticker === "KAS" ? from.ticker : to.ticker} / KAS`}
+            kasUsd={kasUsdPrice}
+          />
         </GlassCard>
 
         <GlassCard className="col-span-12 lg:col-span-3">
