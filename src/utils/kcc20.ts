@@ -1335,7 +1335,7 @@ export async function sellOnCurve(
 
   const q = await quoteSell(tick, tokenAmount)
   if (!q?.quote) throw new Error("Sell quote failed — amount too small to sell?")
-  const kasOut = BigInt(q.quote.net)
+  const kasOut = BigInt(q.quote.kasOut) // gross proceeds BEFORE fees — the covenant signature payload must be SCALE-aligned
 
   const { templates, curveCovidBytes, curveUtxo, inventory } = await liveCurve(tick, tok)
 
