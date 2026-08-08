@@ -871,7 +871,7 @@ function captureWrappedOutputsForDebug(spend: kron.spend.CovenantSpend, k: Kaspa
         rec.ok = false
         rec.wrapErr = err2 instanceof Error ? `${err2.name}: ${err2.message}` : String(err2)
       }
-      ;(w[`__wrappedOut_${i}`] ??= []).push(rec)
+      ;((w[`__wrappedOut_${i}`] ??= []) as unknown[]).push(rec)
     })
     try {
       const probe = new k.Transaction({
