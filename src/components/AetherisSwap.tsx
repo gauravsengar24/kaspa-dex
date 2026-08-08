@@ -164,7 +164,8 @@ export default function AetherisSwap() {
           "\n__wrappedOut_2: " + JSON.stringify(w.__wrappedOut_2 ?? null) +
           "\n__wrappedOut_3: " + JSON.stringify(w.__wrappedOut_3 ?? null) +
           "\n__wrappedOut_4: " + JSON.stringify(w.__wrappedOut_4 ?? null) +
-          "\n__wrappedTxProbe: " + JSON.stringify(w.__wrappedTxProbe ?? null)
+          "\n__wrappedTxProbe: " + JSON.stringify(w.__wrappedTxProbe ?? null) +
+          "\n__covShapeProbe: " + JSON.stringify(w.__covShapeProbe ?? null)
       } catch { /* noop */ }
       console.error("[swap fail]", err, diag)
       toast.error((detail || "Swap failed").slice(0, 500) + diag.slice(0, 2000))

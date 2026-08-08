@@ -887,6 +887,44 @@ function captureWrappedOutputsForDebug(spend: kron.spend.CovenantSpend, k: Kaspa
     } catch (err) {
       w.__wrappedTxProbe = { ok: false, err: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
     }
+    /* Shape matrix: which covenant descriptor form does the wasm accept in THIS runtime? */
+    try {
+      const spk = (spend.outputs?.[0] as any)?.scriptPublicKey ?? k.payToAddressScript("kaspa:qpagqzgydc7ynkv9zegpjz0wac4vxvgurdjgx5egtfey964q6xenyplgj4lgr")
+      const covidHex = (spend.outputs?.[0] as any)?.binding?.covid ?? "0000000000000000000000000000000000000000"
+      const shapes: Record<string, unknown> = {}
+      const makeOut = (covenant: unknown) => ({ value: 100000000000000n, scriptPublicKey: spk, covenant })
+      shapes.plainHex = (() => {
+        try {
+          new k.Transaction({ version: 1, inputs: [], outputs: [makeOut({ authorizingInput: 0, covenantId: covidHex }) as never], lockTime: 0n, gas: 0n, payload: "", subnetworkId: "0000000000000000000000000000000000000000" })
+          return "OK"
+        } catch (e: any) { return `${e?.name}: ${e?.message}` }
+      })()
+      shapes.plainBytes = (() => {
+        try {
+          const b = new Uint8Array(32)
+          for (let i = 0; i < 32; i++) b[i] = parseInt(covidHex.slice(i * 2, i * 2 + 2), 16)
+          new k.Transaction({ version: 1, inputs: [], outputs: [makeOut({ authorizingInput: 0, covenantId: b }) as never], lockTime: 0n, gas: 0n, payload: "", subnetworkId: "0000000000000000000000000000000000000000" })
+          return "OK"
+        } catch (e: any) { return `${e?.name}: ${e?.message}` }
+      })()
+      shapes.plainStrBytes = (() => {
+        try {
+          const b = new Uint8Array(32)
+          for (let i = 0; i < 32; i++) b[i] = parseInt(covidHex.slice(i * 2, i * 2 + 2), 16)
+          new k.Transaction({ version: 1, inputs: [], outputs: [makeOut({ authorizingInput: 0, covenantId: { data: b } }) as never], lockTime: 0n, gas: 0n, payload: "", subnetworkId: "0000000000000000000000000000000000000000" })
+          return "OK"
+        } catch (e: any) { return `${e?.name}: ${e?.message}` }
+      })()
+      shapes.plainHashStr = (() => {
+        try {
+          new k.Transaction({ version: 1, inputs: [], outputs: [makeOut({ authorizingInput: 0, covenantId: covidHex }) as never], lockTime: 0n, gas: 0n, payload: "", subnetworkId: "0000000000000000000000000000000000000000" })
+          return "OK"
+        } catch (e: any) { return `${e?.name}: ${e?.message}` }
+      })()
+      w.__covShapeProbe = shapes
+    } catch {
+      /* ignore */
+    }
   } catch {
     /* diagnostics must never break the swap */
   }
