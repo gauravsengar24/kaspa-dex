@@ -21,6 +21,7 @@ import {
   sellOnCurve,
   swapKasForToken,
   swapTokenForKas,
+  getBalances,
   type Kcc20Token,
   type Kcc20Quote,
 } from "../utils/kcc20"
@@ -50,6 +51,24 @@ export default function AetherisSwap() {
   const [quoteAmt, setQuoteAmt] = useState("")
   const [lpOpen, setLpOpen] = useState(false)
   const [selectedPool, setSelectedPool] = useState<Pool | null>(null)
+  const [kccBalances, setKccBalances] = useState<Record<string, number>>({})
+
+  const refreshBalances = useCallback(async () => {
+    if (wallet.connected && wallet.address) {
+      try {
+        const rows = await getBalances(wallet.address)
+        const map: Record<string, number> = {}
+        for (const r of rows) map[r.tick] = r.parsed
+        setKccBalances(map)
+      } catch { /* balances are cosmetic — never block */ }
+    }
+  }, [wallet.connected, wallet.address])
+
+  useEffect(() => {
+    if (wallet.connected && wallet.address) void refreshBalances()
+    const timer = setInterval(() => { void refreshBalances() }, 15_000)
+    return () => clearInterval(timer)
+  }, [wallet.connected, wallet.address, refreshBalances])
 
   const pools: Pool[] = livePools
   const trades: Trade[] = liveTrades
@@ -105,7 +124,9 @@ export default function AetherisSwap() {
   const minReceived = (out || inAmt) * (1 - slippage / 100)
   const impact = useMemo(() => Math.min(4.8, (inAmt * kasUsdPrice) / 1_200_000), [inAmt, kasUsdPrice])
 
-  const insufficientBalance = wallet.connected && from.ticker === "KAS" && inAmt > wallet.balanceRaw
+  const insufficientBalance =
+    wallet.connected &&
+    inAmt > (from.ticker === "KAS" ? wallet.balanceRaw : kccBalances[from.ticker] ?? 0)
 
   const doSwap = useCallback(async () => {
     if (inAmt <= 0) return toast.error("Enter an amount to swap")
@@ -135,6 +156,8 @@ export default function AetherisSwap() {
       })
       setAmount("")
       setKccQuote(null)
+      void wallet.refreshBalance()
+      void refreshBalances()
     } catch (err) {
       const detail =
         err instanceof Error
@@ -277,8 +300,8 @@ export default function AetherisSwap() {
               usd={fmt(inAmt * kasUsdPrice)}
               token={{ symbol: from.ticker, color: "oklch(0.86 0.2 165)" }}
               onPickToken={() => setPicker("from")}
-              balance={from.ticker === "KAS" ? fmt(Number(wallet.balanceRaw || 0)) : "0"}
-              onMax={from.ticker === "KAS" ? () => setAmount(String(wallet.balanceRaw || 0)) : undefined}
+              balance={from.ticker === "KAS" ? fmt(Number(wallet.balanceRaw || 0)) : fmt(kccBalances[from.ticker] ?? 0)}
+              onMax={from.ticker === "KAS" ? () => setAmount(String(wallet.balanceRaw || 0)) : (kccBalances[from.ticker] ?? 0) > 0 ? () => setAmount(String(kccBalances[from.ticker])) : undefined}
             />
             <div className="relative flex items-center justify-center">
               <button
@@ -297,7 +320,7 @@ export default function AetherisSwap() {
               usd={fmt(out * kasUsdPrice)}
               token={{ symbol: to.ticker, color: "oklch(0.51 0.26 293)" }}
               onPickToken={() => setPicker("to")}
-              balance="0"
+              balance={to.ticker === "KAS" ? fmt(Number(wallet.balanceRaw || 0)) : fmt(kccBalances[to.ticker] ?? 0)}
             />
 
             <div className="mt-3 space-y-1.5 rounded-xl border border-border/50 bg-[oklch(0.11_0.02_265)]/60 p-3 font-mono text-[11px]">
