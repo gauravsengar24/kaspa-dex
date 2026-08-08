@@ -417,11 +417,11 @@ export default function AetherisSwap() {
         </GlassCard>
 
         <GlassCard className="col-span-12 lg:col-span-4">
-          <SectionLabel eyebrow="Live price" title={`${from.ticker} / ${to.ticker}`} right={<ArrowUpRight className="h-4 w-4 text-muted-foreground" />} />
+          <SectionLabel eyebrow="Live chart" title={`${from.ticker} / ${to.ticker}`} right={<ArrowUpRight className="h-4 w-4 text-muted-foreground" />} />
           <LivePriceChart
+            key={`${from.ticker}/${to.ticker}`}
             token={tokens.find((t) => t.tick === (to.ticker === "KAS" ? from.ticker : to.ticker)) ?? null}
-            pairLabel={tokenToken ? `${from.ticker} → KAS → ${to.ticker}` : `${to.ticker === "KAS" ? from.ticker : to.ticker} / KAS`}
-            kasUsd={kasUsdPrice}
+            pair={{ base: from.ticker, quote: to.ticker }}
           />
         </GlassCard>
 
