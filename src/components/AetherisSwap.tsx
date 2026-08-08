@@ -26,6 +26,7 @@ import {
   getBalances,
   type Kcc20Token,
   type Kcc20Quote,
+  type TokenToTokenQuote,
 } from "../utils/kcc20"
 
 type Pool = { id: number; pair: string; tvl: string; vol: string; apr: string; data: number[] }
@@ -48,7 +49,7 @@ export default function AetherisSwap() {
   const [picker, setPicker] = useState<null | "from" | "to">(null)
   const [showSettings, setShowSettings] = useState(false)
   const [swapping, setSwapping] = useState(false)
-  const [kccQuote, setKccQuote] = useState<Kcc20Quote | null>(null)
+  const [kccQuote, setKccQuote] = useState<Kcc20Quote | TokenToTokenQuote | null>(null)
   const [quoteToken, setQuoteToken] = useState("")
   const [quoteAmt, setQuoteAmt] = useState("")
   const [lpOpen, setLpOpen] = useState(false)

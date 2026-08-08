@@ -1720,7 +1720,7 @@ export async function swapTokenForToken(
   // Let KasWare's UTXO context index the leg-1 change output before leg 2 funds from it.
   await delay(3000)
 
-  const kasAmt = Number(Math.max(expectedNet, gained)) / Number(SOMPI_PER_KAS)
+  const kasAmt = Number(gained >= expectedNet ? gained : expectedNet) / Number(SOMPI_PER_KAS)
   const buy = await quoteBuy(toTick, kasAmt)
   if (!buy?.quote) throw new Error(`Buy quote failed for ${toTick.toUpperCase()}`)
 
