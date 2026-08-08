@@ -322,9 +322,12 @@ export default function AetherisSwap() {
 
           {showSettings && (
             <div className="mb-3 rounded-xl border border-border/50 bg-[oklch(0.11_0.02_265)]/60 p-3">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Slippage tolerance</div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Slippage tolerance</span>
+                <span className="font-mono text-[10px] text-[color:var(--emerald-accent)]">{slippage.toFixed(2)}%</span>
+              </div>
               <div className="flex gap-2">
-                {[0.1, 0.3, 0.5, 1].map((s) => (
+                {[0.01, 0.05, 0.1, 0.3].map((s) => (
                   <button
                     key={s}
                     type="button"
@@ -334,6 +337,23 @@ export default function AetherisSwap() {
                     {s}%
                   </button>
                 ))}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0.01}
+                  max={0.3}
+                  step={0.01}
+                  value={slippage}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    if (!Number.isFinite(v)) return setSlippage(0.3)
+                    setSlippage(Math.min(0.3, Math.max(0.01, v)))
+                  }}
+                  onBlur={() => { if (slippage < 0.01 || slippage > 0.3) setSlippage(0.3) }}
+                  className="w-full rounded-lg border border-border/60 bg-transparent px-2.5 py-1.5 font-mono text-[11px] text-foreground outline-none focus:border-[color:var(--emerald-accent)]/50"
+                />
+                <span className="font-mono text-[11px] text-muted-foreground">custom (0.01–0.3%)</span>
               </div>
             </div>
           )}
