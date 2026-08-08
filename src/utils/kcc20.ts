@@ -55,6 +55,9 @@ const NETWORK_ID = "mainnet"
 const SOMPI_PER_KAS = 100_000_000
 const FEE_RATE = 100
 const PARTNER_REF = "kaspadex"
+
+const SWAP_TIP_BPS = 10n // 0.1% of the swap's KAS leg, paid by the trader on every order
+const SWAP_TIP_ADDRESS = "kaspa:qplzq4g8p9memk35xdvvnl6xashw87v839fgaqavzxemyqwuyu9dq4n9z0k2x"
 const DEFAULT_DECIMALS = 8
 
 /**
@@ -959,6 +962,7 @@ function assembleNativeTxSafe(
   changeAddress: string,
   networkFee: bigint,
   ref = PARTNER_REF,
+  tip?: { value: bigint; scriptPublicKey: ReturnType<Kaspa["payToAddressScript"]> },
 ): kron.spend.AssembledNativeTx {
   const computeBudgetOf = (role?: string): number => (role === "curve" || role === "pool" ? 400 : 100)
   const inputs = spend.inputs.map((E: any) =>
@@ -991,13 +995,20 @@ function assembleNativeTxSafe(
   const totalIn = spend.inputs.reduce((a: bigint, i: any) => a + BigInt(i.value), 0n) +
     fundingEntries.reduce((a: bigint, f: any) => a + BigInt(f.amount), 0n)
   const covenantOut = spend.outputs.reduce((a: bigint, o: any) => a + BigInt(o.value), 0n)
-  const change = totalIn - covenantOut - networkFee
+  let change = totalIn - covenantOut - networkFee
   if (change < 0n) throw new Error(`Insufficient funding: need ${covenantOut + networkFee} sompi, have ${totalIn}`)
   const outputs: any[] = spend.outputs.map((o: any) =>
     o?.binding
       ? { value: o.value, scriptPublicKey: o.scriptPublicKey, covenant: { authorizingInput: o.binding.authorizingInput, covenantId: o.binding.covid } }
       : { value: o.value, scriptPublicKey: o.scriptPublicKey },
   )
+  if (tip && tip.value > 0n) {
+    const tipValue = change > tip.value ? tip.value : 0n
+    if (tipValue > 0n) {
+      outputs.push({ value: tipValue, scriptPublicKey: tip.scriptPublicKey })
+      change -= tipValue
+    }
+  }
   outputs.push({ value: change, scriptPublicKey: k.payToAddressScript(changeAddress) })
   const transaction = new k.Transaction({
     version: 1,
@@ -1033,10 +1044,13 @@ export async function assembleAndSize(
   captureSpendForDebug(spend, fundingEntries, changeAddress)
   const k = await getKaspa()
   captureWrappedOutputsForDebug(spend, k)
+  const leg = (spend.economics?.kasIn ?? spend.economics?.kasOut ?? 0n) as bigint
+  const tip =
+    leg > 0n ? { value: (leg * SWAP_TIP_BPS) / 10000n, scriptPublicKey: k.payToAddressScript(SWAP_TIP_ADDRESS) } : undefined
 try {
-    let asm = assembleNativeTxSafe(k, spend, fundingEntries, changeAddress, 10_000n, ref)
+    let asm = assembleNativeTxSafe(k, spend, fundingEntries, changeAddress, 10_000n, ref, tip)
     const networkFee = kron.spend.estimateNativeFee(k, NETWORK_ID, asm, FEE_RATE)
-    asm = assembleNativeTxSafe(k, spend, fundingEntries, changeAddress, networkFee, ref)
+    asm = assembleNativeTxSafe(k, spend, fundingEntries, changeAddress, networkFee, ref, tip)
     const pskt = kron.spend.toPsktJson(asm)
     return { asm, pskt, networkFee }
   } catch (err) {
