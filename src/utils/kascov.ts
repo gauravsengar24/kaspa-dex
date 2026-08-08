@@ -276,15 +276,16 @@ export async function fetchMarket(id: string): Promise<{ market: KascovMarket; r
 }
 
 /** GET /data/{network}/trades — admitted trades across all tokens (newest first).
- *  `beforeSeq`/`beforeToken` resume behind a compound cursor (older trades). */
-export async function fetchTrades(
-  opts: { limit?: number; marketId?: string; tokenId?: string; beforeSeq?: number; beforeToken?: string } = {},
-): Promise<KascovTrade[]> {
+ *  Cursor pagination is the compound trio (before_token, before_daa, before_seq)
+ *  taken from the OLDEST row of the previous page — all three are required. */
+export async function fetchTrades(opts: { limit?: number; marketId?: string; tokenId?: string; beforeDaa?: number; beforeSeq?: number; beforeToken?: string } = {}): Promise<KascovTrade[]> {
   const d = await getJson<Record<string, unknown>>("/trades", {
     limit: opts.limit ?? 40,
     market_id: opts.marketId ?? "",
     token_id: opts.tokenId ?? "",
-    ...(opts.beforeSeq != null ? { before_token: opts.beforeToken ?? opts.tokenId ?? "", before_seq: opts.beforeSeq } : {}),
+    ...(opts.beforeSeq != null && opts.beforeDaa != null
+      ? { before_token: opts.beforeToken ?? opts.tokenId ?? "", before_daa: opts.beforeDaa, before_seq: opts.beforeSeq }
+      : {}),
   })
   return Array.isArray(d.trades) ? (d.trades as any[]).map(mapTrade) : []
 }
