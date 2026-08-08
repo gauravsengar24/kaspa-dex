@@ -16,11 +16,13 @@ import type { TokenInfo } from "../types"
 import {
   quoteBuy,
   quoteSell,
+  quoteTokenToToken,
   walletBridge,
   buyOnCurve,
   sellOnCurve,
   swapKasForToken,
   swapTokenForKas,
+  swapTokenForToken,
   getBalances,
   type Kcc20Token,
   type Kcc20Quote,
@@ -78,13 +80,15 @@ export default function AetherisSwap() {
   }, [kccTokens])
 
   const sellMode = from.ticker !== "KAS"
+  const tokenToken = from.ticker !== "KAS" && to.ticker !== "KAS"
   const kccToken = useMemo(() => {
+    if (tokenToken) return null
     const target = to.ticker === "KAS" ? from.ticker : to.ticker
     return tokens.find((t) => t.tick === target) ?? null
-  }, [to, from, tokens])
+  }, [to, from, tokens, tokenToken])
 
   useEffect(() => {
-    if (!kccToken || !amount || Number(amount) <= 0) {
+    if ((!tokenToken && !kccToken) || !amount || Number(amount) <= 0) {
       setKccQuote(null)
       setQuoteToken("")
       setQuoteAmt("")
@@ -93,16 +97,21 @@ export default function AetherisSwap() {
     let cancelled = false
     ;(async () => {
       const amt = Number(amount)
-      const q = sellMode ? await quoteSell(kccToken.tick, amt) : await quoteBuy(kccToken.tick, amt)
+      const q = tokenToken
+        ? await quoteTokenToToken(from.ticker, to.ticker, amt)
+        : sellMode
+          ? await quoteSell(kccToken!.tick, amt)
+          : await quoteBuy(kccToken!.tick, amt)
       if (cancelled || !q) return
       setKccQuote(q)
-      setQuoteToken(kccToken.tick)
+      setQuoteToken(tokenToken ? to.ticker : kccToken!.tick)
       setQuoteAmt(amount)
     })()
     return () => {
       cancelled = true
     }
-  }, [kccToken, amount, sellMode])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kccToken, amount, sellMode, tokenToken, from.ticker, to.ticker])
 
   const kasUsdPrice = tokenPrice("KAS").usd || l1Info.kasUsd || 0.02
   const inAmt = Number(amount) || 0
@@ -112,11 +121,14 @@ export default function AetherisSwap() {
   const liveActive = l1Info.activeCovenants ?? livePools.length
 
   const estimatedOutput = useMemo(() => {
-    if (kccQuote && quoteToken === kccToken?.tick && quoteAmt === amount) {
+    if (!kccQuote || quoteAmt !== amount) return null
+    if (!tokenToken) {
+      if (quoteToken !== kccToken?.tick) return null
       return Number(kccQuote.tokenOut)
     }
-    return null
-  }, [kccQuote, quoteToken, kccToken, quoteAmt, amount])
+    if (quoteToken !== to.ticker) return null
+    return Number(kccQuote.tokenOut)
+  }, [kccQuote, quoteToken, kccToken, quoteAmt, amount, tokenToken, to.ticker])
 
   const out = estimatedOutput ?? 0
   const rate =
@@ -131,7 +143,13 @@ export default function AetherisSwap() {
   const doSwap = useCallback(async () => {
     if (inAmt <= 0) return toast.error("Enter an amount to swap")
     if (insufficientBalance) return toast.error("Insufficient KAS balance")
-    if (!kccToken) return toast.error("Select a KCC-20 token to swap on-chain")
+    if (tokenToken) {
+      if (!tokens.find((t) => t.tick === from.ticker) || !tokens.find((t) => t.tick === to.ticker)) {
+        return toast.error("Select KCC-20 tokens to swap on-chain")
+      }
+    } else if (!kccToken) {
+      return toast.error("Select a KCC-20 token to swap on-chain")
+    }
 
     if (!wallet.connected) {
       await wallet.connect()
@@ -143,16 +161,28 @@ export default function AetherisSwap() {
       const bridge = walletBridge()
       if (!bridge) throw new Error("KasWare wallet bridge unavailable")
 
-      const txid = sellMode
-        ? kccToken.graduated
-          ? (await swapTokenForKas(kccToken.tick, inAmt, bridge)).txid
-          : (await sellOnCurve(kccToken.tick, inAmt, bridge)).txid
-        : kccToken.graduated
-          ? (await swapKasForToken(kccToken.tick, inAmt, bridge)).txid
-          : (await buyOnCurve(kccToken.tick, inAmt, bridge)).txid
+      let txid: string
+      let routeNote: string
+      if (tokenToken) {
+        const r = await swapTokenForToken(from.ticker, to.ticker, inAmt, bridge)
+        routeNote = `Two-leg ${from.ticker}→KAS→${to.ticker}`
+        txid = `${r.leg1.slice(0, 10)}… → ${r.leg2.slice(0, 10)}…`
+      } else if (sellMode) {
+        const r = kccToken!.graduated
+          ? await swapTokenForKas(kccToken!.tick, inAmt, bridge)
+          : await sellOnCurve(kccToken!.tick, inAmt, bridge)
+        txid = r.txid
+        routeNote = kccToken!.graduated ? "KRON AMM pool" : "Bonding curve"
+      } else {
+        const r = kccToken!.graduated
+          ? await swapKasForToken(kccToken!.tick, inAmt, bridge)
+          : await buyOnCurve(kccToken!.tick, inAmt, bridge)
+        txid = r.txid
+        routeNote = kccToken!.graduated ? "KRON AMM pool" : "Bonding curve"
+      }
 
       toast.success(`Swapped ${fmt(inAmt)} ${from.ticker} → ${fmt(out || inAmt, 4)} ${to.ticker}`, {
-        description: `${kccToken.graduated ? "KRON AMM pool" : "Bonding curve"} · TX ${txid.slice(0, 10)}…`,
+        description: `${routeNote} · TX ${txid}`,
       })
       setAmount("")
       setKccQuote(null)
@@ -329,7 +359,7 @@ export default function AetherisSwap() {
                 ["Slippage tolerance", `${slippage.toFixed(2)}%`],
                 ["Price impact", `${impact.toFixed(2)}%`],
                 ["Min received", `${fmt(minReceived, 4)} ${to.ticker}`],
-                ["Route", kccToken ? (kccToken.graduated ? "KRON AMM" : "Bonding curve") : `${from.ticker} → ${to.ticker}`],
+                ["Route", tokenToken ? `${from.ticker} → KAS → ${to.ticker}` : kccToken ? (kccToken.graduated ? "KRON AMM" : "Bonding curve") : `${from.ticker} → ${to.ticker}`],
                 ["Network fee", "≈ $0.002"],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-3">

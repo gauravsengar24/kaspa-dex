@@ -1621,8 +1621,127 @@ export async function swapTokenForKas(
 }
 
 /* ---------------------------------------------------------------------------
- * Utils
+ * Token → token swaps (two legs through KAS)
  * ------------------------------------------------------------------------- */
+
+export interface TokenToTokenQuote {
+  fromTick: string
+  toTick: string
+  amount: string
+  fromGraduated: boolean
+  toGraduated: boolean
+  /** net KAS received on leg 1 (sompi, after fees) — the amount routed into leg 2 */
+  kasNet: string
+  /** token out on leg 2 (raw units) */
+  tokenOut: string
+  path: "curve" | "pool" | "curve→pool" | "pool→curve"
+}
+
+/**
+ * Quote a token → token swap routed through KAS as the two-leg bridge.
+ * Leg 1 sells `fromTick` for net KAS; leg 2 buys `toTick` with that KAS.
+ */
+export async function quoteTokenToToken(
+  fromTick: string,
+  toTick: string,
+  tokenAmount: number,
+): Promise<TokenToTokenQuote | null> {
+  const fromTok = await getToken(fromTick)
+  const toTok = await getToken(toTick)
+  if (!fromTok || !toTok) return null
+
+  const leg1 = await quoteSell(fromTick, tokenAmount)
+  if (!leg1?.quote || !leg1.net) return null
+  const kasNet = BigInt(leg1.net)
+  if (kasNet <= 0n) return null
+  const kasAmt = Number(kasNet) / Number(SOMPI_PER_KAS)
+
+  const leg2 = await quoteBuy(toTick, kasAmt)
+  if (!leg2?.quote) return null
+
+  const path: TokenToTokenQuote["path"] =
+    fromTok.graduated && toTok.graduated
+      ? "pool"
+      : !fromTok.graduated && !toTok.graduated
+        ? "curve"
+        : fromTok.graduated
+          ? "pool→curve"
+          : "curve→pool"
+
+  return {
+    fromTick,
+    toTick,
+    amount: String(tokenAmount),
+    fromGraduated: fromTok.graduated,
+    toGraduated: toTok.graduated,
+    kasNet: kasNet.toString(),
+    tokenOut: leg2.tokenOut,
+    path,
+  }
+}
+
+/**
+ * Execute a token → token swap as two sequential on-chain txs:
+ * leg 1 sells `amount` of `fromTick` for KAS (curve or pool), waits for the
+ * proceeds to hit the wallet, then leg 2 buys `toTick` with that KAS.
+ */
+export async function swapTokenForToken(
+  fromTick: string,
+  toTick: string,
+  tokenAmount: number,
+  bridge: WalletBridge,
+): Promise<{ leg1: string; leg2: string }> {
+  const address = await bridge.getAddress()
+  if (!address) throw new Error("Wallet not connected")
+
+  const fromTok = await getToken(fromTick)
+  const toTok = await getToken(toTick)
+  if (!fromTok || !toTok) throw new Error("Token not found")
+
+  const sellQ = await quoteSell(fromTick, tokenAmount)
+  if (!sellQ?.quote) throw new Error(`Sell quote failed for ${fromTick.toUpperCase()}`)
+  const expectedNet = BigInt(sellQ.net ?? sellQ.quote.kasOut ?? 0)
+
+  const rpc = await getRpc()
+  const beforeBal = await safeBalance(rpc, address)
+  const leg1 = fromTok.graduated
+    ? (await swapTokenForKas(fromTick, tokenAmount, bridge)).txid
+    : (await sellOnCurve(fromTick, tokenAmount, bridge)).txid
+
+  // Wait for the leg-1 proceeds (change lands in the wallet's own address). Kaspa finality is
+  // ~1s per DAA score; poll the authoritative node balance, then let the wallet context refresh.
+  let gained = 0n
+  for (let i = 0; i < 30; i++) {
+    const now = await safeBalance(rpc, address)
+    gained = now - beforeBal
+    if (gained >= expectedNet * 9n / 10n) break
+    await delay(2000)
+  }
+  // Let KasWare's UTXO context index the leg-1 change output before leg 2 funds from it.
+  await delay(3000)
+
+  const kasAmt = Number(Math.max(expectedNet, gained)) / Number(SOMPI_PER_KAS)
+  const buy = await quoteBuy(toTick, kasAmt)
+  if (!buy?.quote) throw new Error(`Buy quote failed for ${toTick.toUpperCase()}`)
+
+  const leg2 = toTok.graduated
+    ? (await swapKasForToken(toTick, kasAmt, bridge)).txid
+    : (await buyOnCurve(toTick, kasAmt, bridge)).txid
+  return { leg1, leg2 }
+}
+
+async function safeBalance(rpc: RpcClient, address: string): Promise<bigint> {
+  try {
+    const res = await rpc.getBalanceByAddress({ address })
+    return BigInt(res.balance ?? 0)
+  } catch {
+    return 0n
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
 
 function safeStringify(e: unknown): string {
   if (e == null) return "null"
