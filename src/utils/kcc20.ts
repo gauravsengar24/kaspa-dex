@@ -747,6 +747,9 @@ export function walletBridge(): WalletBridge | null {
         return await w.signPskt({ txJsonString, options: { signInputs } })
       } catch (e: any) {
         const detail = e instanceof Error ? e.message : typeof e === "string" ? e : safeStringify(e)
+        if (/4001|user rejected|USER_REJECT|request rejected|decline/i.test(detail)) {
+          throw new Error("User rejected the transaction")
+        }
         try {
           ;(window as any).__lastSwapTxJson = txJsonString
           ;(window as any).__lastSwapTxSignInputs = JSON.stringify(signInputs)
