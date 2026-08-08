@@ -188,8 +188,18 @@ const _templateCache = new Map<string, CompiledTemplates>()
 /** Convert a server blob ({scriptHex, stateStart, params}) into SDK template shapes. */
 function compileFromBody(body: any): any {
   const b = (s: any) => (typeof s === "string" ? hexToBytes(s) : new Uint8Array(s ?? []))
-  const p = body?.params ?? body?.pool?.params
   const fee = (x: any, y: any) => BigInt(x ?? y ?? 0)
+  const p = body?.params ?? body?.pool?.params
+  const curveParams: kron.curveCp.CpParams = {
+    creatorFeeOwner: b(p?.creatorFeeOwner),
+    platformFeeOwner: b(p?.platformFeeOwner),
+    vKas: BigInt(p?.vKas ?? 0),
+    graduationKas: BigInt(p?.graduationKas ?? 0),
+    creatorFeeBps: BigInt(p?.creatorFeeBps ?? 0),
+    platformFeeBps: BigInt(p?.platformFeeBps ?? 0),
+    graduationFeeBps: BigInt(p?.graduationFeeBps ?? 0),
+    ...(p?.devFundOwner ? { devFundOwner: b(p.devFundOwner), devFundBps: BigInt(p.devFundBps ?? 0) } : {}),
+  }
   return {
     token: { script: b(body?.token?.scriptHex ?? body?.token?.script), stateStart: Number(body?.token?.stateStart ?? 0) },
     pool: {
@@ -197,15 +207,15 @@ function compileFromBody(body: any): any {
       stateStart: Number(body?.pool?.stateStart ?? 0),
       canonicalInventoryRequired: body?.pool?.canonicalLpInventory ?? body?.canonicalLpInventory ?? true,
     },
-    curve: { script: b(body?.curve?.scriptHex ?? body?.curve?.script), stateStart: Number(body?.curve?.stateStart ?? 0) },
-    params: p
+    curve: { script: b(body?.curve?.scriptHex ?? body?.curve?.script), stateStart: Number(body?.curve?.stateStart ?? 0), params: curveParams },
+    params: curveParams
       ? {
-          creatorFeeOwner: b(p.creatorFeeOwner),
-          platformFeeOwner: b(p.platformFeeOwner),
-          creatorFeeBps: fee(p.dexCreatorFeeBps, p.creatorFeeBps),
-          platformFeeBps: fee(p.dexPlatformFeeBps, p.platformFeeBps),
-          lpFeeBps: fee(p.dexLpFeeBps, p.lpFeeBps),
-          lockedShares: BigInt(p.poolLockedShares ?? p.lockedShares ?? 0),
+          creatorFeeOwner: b(p?.creatorFeeOwner),
+          platformFeeOwner: b(p?.platformFeeOwner),
+          creatorFeeBps: fee(p?.dexCreatorFeeBps, p?.creatorFeeBps),
+          platformFeeBps: fee(p?.dexPlatformFeeBps, p?.platformFeeBps),
+          lpFeeBps: fee(p?.dexLpFeeBps, p?.lpFeeBps),
+          lockedShares: BigInt(p?.poolLockedShares ?? p?.lockedShares ?? 0),
         }
       : emptyPoolParams(),
   }
