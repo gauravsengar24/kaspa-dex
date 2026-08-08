@@ -1214,6 +1214,7 @@ async function liveCurve(tick: string, tok: Kcc20Token) {
   const k = await getKaspa()
   const templates = await getTemplates(tick)
   const curveCovidBytes = kron.genesis.covidToBytes(tok.curveCovenantId)
+  const tokenCovidBytes = kron.genesis.covidToBytes(tok.covenantId)
   const s = tok.cpState!
 
   const seq = sequencer()
@@ -1228,7 +1229,7 @@ async function liveCurve(tick: string, tok: Kcc20Token) {
         realKas: BigInt(head.head.reserves.realKas),
         state: {
           graduated: false,
-          tokenCovid: curveCovidBytes,
+          tokenCovid: tokenCovidBytes,
           tokenReserve: BigInt(head.head.reserves.tokenReserve),
         },
       }
@@ -1247,7 +1248,7 @@ async function liveCurve(tick: string, tok: Kcc20Token) {
     // Indexer fallback: derive the two covenant addresses from live state + retry (5× 1.5s).
     const reserveState: kron.curveCp.CpCurveState = {
       graduated: false,
-      tokenCovid: curveCovidBytes,
+      tokenCovid: tokenCovidBytes,
       tokenReserve: BigInt(s.tokenReserve ?? 0),
     }
     const curveAddr = kron.curveCp.cpAddress(k, templates.curve, reserveState, NETWORK_ID)
@@ -1257,10 +1258,10 @@ async function liveCurve(tick: string, tok: Kcc20Token) {
     if (!curveEntry) throw new Error("Could not locate the live curve UTXO — retry in a moment")
     const curveValue = BigInt(curveEntry.amount ?? 0)
     curveUtxo = { transactionId: curveEntry.outpoint.transactionId, index: curveEntry.outpoint.index, realKas: curveValue, state: reserveState }
-    // The curve's token inventory is a KCC-20 UTXO covenant-owned by the curve covid (the minter branch);
+    // The curve's token inventory is a KCC-20 UTXO covenant-owned by the curve covid (the owner branch, not the minter branch);
     // its native value is the token carrier — read it, don't assume. Look it up among the curve's outputs.
     const tokenAmount = BigInt(s.tokenReserve ?? 0)
-    const inventoryAddr = kron.kcc20.kcc20Address(k, templates.token, kron.kcc20.covenantIdOwned(curveCovidBytes, tokenAmount, true), NETWORK_ID)
+    const inventoryAddr = kron.kcc20.kcc20Address(k, templates.token, kron.kcc20.covenantIdOwned(curveCovidBytes, tokenAmount, false), NETWORK_ID)
     const invLookup = await rpc.getUtxosByAddresses({ addresses: [inventoryAddr] })
     const invEntry = invLookup.entries?.find((e) => BigInt(e.amount ?? 0) > 0n)
     inventory = {
