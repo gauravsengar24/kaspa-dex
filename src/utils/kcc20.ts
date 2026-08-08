@@ -842,38 +842,51 @@ function captureSpendForDebug(
 function captureWrappedOutputsForDebug(spend: kron.spend.CovenantSpend, k: Kaspa): void {
   try {
     const w = window as unknown as Record<string, unknown>
+    const wrapped: unknown[] = []
     ;(spend.outputs ?? []).forEach((o: any, i: number) => {
+      const rec: Record<string, unknown> = { i }
       try {
         const hash = new k.Hash(o?.binding?.covid ?? "")
-        const h = {
-          i,
-          ok: true,
-          hashLen: hash.toString().length,
-          hashCtor: (hash.constructor as unknown as { name?: string })?.name ?? "?",
-          outputCtor: null as string | null,
-          bindingAuthorizingInput: null as string | null,
-        }
-        try {
-          const out = new k.TransactionOutput(
-            BigInt(o?.value ?? 0),
-            o?.scriptPublicKey,
-            new k.CovenantBinding(o?.binding?.authorizingInput ?? 0, hash),
-          )
-          h.outputCtor = (out?.constructor as unknown as { name?: string })?.name ?? "?"
-          h.bindingAuthorizingInput = out?.covenant?.authorizingInput?.toString?.() ?? "?"
-        } catch (err2) {
-          h.ok = false
-          ;(h as any).wrapErr = err2 instanceof Error ? `${err2.name}: ${err2.message}` : String(err2)
-        }
-        ;((w[`__wrappedOut_${i}`] ??= []) as unknown[]).push(h)
-      } catch (err) {
-        ;((w[`__wrappedOut_${i}`] ??= []) as unknown[]).push({
-          i,
-          ok: false,
-          hashErr: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-        })
+        rec.hashOk = true
+        rec.hashLen = hash.toString().length
+        rec.hashCtor = (hash.constructor as unknown as { name?: string })?.name ?? "?"
+        const out = new k.TransactionOutput(
+          BigInt(o?.value ?? 0),
+          o?.scriptPublicKey,
+          new k.CovenantBinding(o?.binding?.authorizingInput ?? 0, hash),
+        )
+        rec.wrapOk = true
+        rec.outputCtor = (out?.constructor as unknown as { name?: string })?.name ?? "?"
+        rec.isInstanceTO = out instanceof k.TransactionOutput
+        const cov = (out as any)?.covenant
+        rec.covCtor = cov?.constructor?.name ?? typeof cov
+        rec.covIsInst = cov instanceof k.CovenantBinding
+        const cid = cov?.covenantId
+        rec.cidCtor = cid?.constructor?.name ?? typeof cid
+        rec.cidIsInst = cid instanceof k.Hash
+        rec.spkCtor = (o?.scriptPublicKey as any)?.constructor?.name ?? typeof o?.scriptPublicKey
+        rec.spkIsInst = o?.scriptPublicKey instanceof k.ScriptPublicKey
+        wrapped.push(out)
+      } catch (err2) {
+        rec.ok = false
+        rec.wrapErr = err2 instanceof Error ? `${err2.name}: ${err2.message}` : String(err2)
       }
+      ;(w[`__wrappedOut_${i}`] ??= []).push(rec)
     })
+    try {
+      const probe = new k.Transaction({
+        version: 1,
+        inputs: [],
+        outputs: wrapped as never[],
+        lockTime: 0n,
+        gas: 0n,
+        payload: "",
+        subnetworkId: "0000000000000000000000000000000000000000",
+      })
+      w.__wrappedTxProbe = { ok: true, mass: (probe as unknown as { storageMass?: bigint }).storageMass?.toString?.() ?? "?" }
+    } catch (err) {
+      w.__wrappedTxProbe = { ok: false, err: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
+    }
   } catch {
     /* diagnostics must never break the swap */
   }

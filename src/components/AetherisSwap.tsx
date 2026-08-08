@@ -158,7 +158,13 @@ export default function AetherisSwap() {
           "\n__lastCovidError: " + JSON.stringify(w.__lastCovidError ?? null) +
           "\n__lastAssembleSpendOutputs: " + JSON.stringify(w.__lastAssembleSpendOutputs ?? null) +
           "\n__lastAssembleFunding: " + JSON.stringify(w.__lastAssembleFunding ?? null) +
-          "\n__lastAssembleChangeAddress: " + JSON.stringify(w.__lastAssembleChangeAddress ?? null)
+          "\n__lastAssembleChangeAddress: " + JSON.stringify(w.__lastAssembleChangeAddress ?? null) +
+          "\n__wrappedOut_0: " + JSON.stringify(w.__wrappedOut_0 ?? null) +
+          "\n__wrappedOut_1: " + JSON.stringify(w.__wrappedOut_1 ?? null) +
+          "\n__wrappedOut_2: " + JSON.stringify(w.__wrappedOut_2 ?? null) +
+          "\n__wrappedOut_3: " + JSON.stringify(w.__wrappedOut_3 ?? null) +
+          "\n__wrappedOut_4: " + JSON.stringify(w.__wrappedOut_4 ?? null) +
+          "\n__wrappedTxProbe: " + JSON.stringify(w.__wrappedTxProbe ?? null)
       } catch { /* noop */ }
       console.error("[swap fail]", err, diag)
       toast.error((detail || "Swap failed").slice(0, 500) + diag.slice(0, 2000))
